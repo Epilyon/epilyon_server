@@ -1,0 +1,17 @@
+[package]
+name = "epilyon_server"
+version = "0.1.0"
+authors = ["Adrien Navratil <adrien1975@live.fr>"]
+edition = "2018"
+
+[dependencies]
+rocket = "0.4.2"
+rocket_contrib = "0.4.2"
+serde = "1.0.101"
+serde_derive = "1.0.101"
+serde_json = "1.0.41"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "0.7.4", features = ["v4"] }
+dotenv = "0.14.1"
+reqwest = "0.9.22"
+base64 = "0.10.1"
