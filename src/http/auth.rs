@@ -138,7 +138,7 @@ impl<'r> Responder<'r> for AuthError {
 
         Response::build()
             .header(ContentType::JSON)
-            .sized_body(Cursor::new("{ \"error\": \"oh no auth error\" }")) // TODO: Send it for real
+            .sized_body(Cursor::new("{ \"error\": \"AuthError: Error message not implemented yet\" }")) // TODO: Send it for real
             .ok() // TODO: Change response code
     }
 }

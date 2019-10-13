@@ -4,12 +4,13 @@ pub mod jwt;
 use crate::database::DatabaseAccess;
 
 pub fn start() {
-    rocket::ignite().mount("/", routes![
-        auth::start,
-        auth::login,
-        auth::redirect,
-        auth::end
-    ])
+    rocket::ignite()
+        .mount("/", routes![
+            auth::start,
+            auth::login,
+            auth::redirect,
+            auth::end
+        ])
         .manage(DatabaseAccess::new())
         .launch();
 }

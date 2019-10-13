@@ -115,25 +115,3 @@ struct TokenContent {
     pub name: String,
     pub unique_name: String
 }
-
-/*let vars = vec![
-            "MS_TENANT_URL", "MS_CLIENT_ID", "MS_CLIENT_SECRET", "MS_REDIRECT_URI", "MS_SCOPES"
-        ];
-
-        let mut result = vec![];
-
-        for name in vars.iter() {
-            match std::env::var(name) {
-                Some(var) => result.push(var),
-                None => {
-                    return None;
-                }
-            }
-        }
-
-        return Some(MSEnvVars {
-            tenant_url: result.get(0).unwrap(),
-            client_id: result.get(1).unwrap(),
-            client_secret: result.get(2).unwrap(),
-            scopes: result.get(3)?
-        })*/
