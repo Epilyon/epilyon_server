@@ -1,3 +1,6 @@
+use std::fmt;
+use std::error::Error;
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
@@ -8,7 +11,7 @@ pub mod microsoft;
 pub struct AuthSession {
     state: AuthState,
     nonce: String,
-    identity: Option<AuthIdentity>,
+    identity: Option<AuthIdentity>, // 'Some' if AuthState = Ended | Logged
     created_at: DateTime<Utc>
 }
 
@@ -45,8 +48,8 @@ impl AuthSession {
         Ok(())
     }
 
-    pub fn fail(&mut self) {
-        self.state = AuthState::Failed
+    pub fn fail(&mut self, err: AuthError) {
+        self.state = AuthState::Failed(err)
     }
 
     pub fn get_identity(&self) -> Option<AuthIdentity> {
@@ -59,13 +62,13 @@ pub enum AuthState {
     Started,
     Ended,
     Logged,
-    Failed
+    Failed(AuthError)
 }
 
 #[derive(Serialize, Clone)]
 pub struct AuthIdentity {
-    name: String,
-    email: String,
+    pub name: String,
+    pub email: String,
     access_token: String,
     refresh_token: String,
     refreshed_at: DateTime<Utc>
@@ -83,8 +86,32 @@ impl AuthIdentity {
     }
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum AuthError {
     MissingMSVars,
-    RemoteError
+    RemoteError,
+    AlreadyLogged,
+    UnknownState,
+    DatabaseError // We do not pass database error beacuse it should not be displayed to the user
+}
+
+impl fmt::Display for AuthError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use AuthError::*;
+
+        // TODO: Lang? Client-side?
+        write!(f, "{}", match self {
+            MissingMSVars => "Server setup error : Missing one of the MS .env var (did you copy the .env.example to .env ?)",
+            RemoteError => "Remote server (e.g. Microsoft) threw an error, this is bad : report this to the devs",
+            AlreadyLogged => "You already went through the auth process, please try again",
+            UnknownState => "Can't find out who you are (session expired?) please try again",
+            DatabaseError => "Database connection error, this is bad : report this to the server hoster"
+        })
+    }
+}
+
+impl Error for AuthError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
 }

@@ -57,19 +57,19 @@ pub fn acquire_token(code: &str) -> AuthResult<AuthIdentity> {
                             json.refresh_token
                         )),
                         Err(e) => {
-                            println!("JWT Parsing error : '{}'", e); // TODO: Logger
+                            error!("Failed to parse JWT '{}' : {}", &json.access_token, e);
                             Err(AuthError::RemoteError)
                         }
                     }
                 },
                 Err(e) => {
-                    println!("JSON Parsing error : '{}'", e); // TODO: Logger
+                    error!("Failed to parse response JSON '{}' : {}", &r.text().unwrap(), e);
                     Err(AuthError::RemoteError)
                 }
             }
         },
         Err(e) => {
-            println!("HTTP Request error : '{}'", e); // TODO: Logger
+            error!("Failed to execute OAuth token request : {}", e);
             Err(AuthError::RemoteError)
         }
     }

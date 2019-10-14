@@ -2,6 +2,8 @@
 
 #[macro_use] extern crate rocket;
 #[macro_use] extern crate rocket_contrib;
+#[macro_use] extern crate log;
+extern crate pretty_env_logger;
 extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
@@ -16,7 +18,19 @@ mod database;
 mod auth;
 mod users;
 
+const VERSION: &'static str = "1.0.0";
+
 fn main() {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "warn,epilyon_server=info,launch=info");
+    }
+
+    pretty_env_logger::init();
+
+    info!("Starting Epilyon server v{}", VERSION);
+    info!("by Adrien 'Litarvan' Navratil");
+    info!("---------------------------------------------------");
+
     dotenv::dotenv().ok();
     http::start();
 }
