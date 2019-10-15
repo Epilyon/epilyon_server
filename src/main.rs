@@ -32,5 +32,18 @@ fn main() {
     info!("---------------------------------------------------");
 
     dotenv::dotenv().ok();
-    http::start();
+
+    info!("Loading users from CRI...");
+    match users::load_users() {
+        Ok(users) => {
+            info!("Successfully loaded {} users from CRI", users.count());
+            info!("Starting HTTP server");
+
+            http::start(users);
+        },
+        Err(e) => {
+            error!("Error while loading users from CRI : {}", e);
+            error!("Can't start");
+        }
+    }
 }

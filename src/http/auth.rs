@@ -10,7 +10,7 @@ use crate::auth::microsoft;
 use crate::database::DatabaseAccess;
 use crate::http::HttpError;
 
-// TODO: Split those in src/auth/mod.rs
+// TODO: Split those in src/auth/mod.rs IF NECESSARY (after CRI integration)
 
 #[get("/auth/start")] // TODO: Use POST
 pub fn start(db: State<DatabaseAccess>, mut cookies: Cookies) -> Result<JsonValue, HttpError> {

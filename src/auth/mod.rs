@@ -3,8 +3,6 @@ use std::error::Error;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-
-pub mod cri;
 pub mod microsoft;
 
 #[derive(Clone)]
@@ -102,7 +100,7 @@ impl fmt::Display for AuthError {
         // TODO: Lang? Client-side?
         write!(f, "{}", match self {
             MissingMSVars => "Server setup error : Missing one of the MS .env var (did you copy the .env.example to .env ?)",
-            RemoteError => "Remote server (e.g. Microsoft) threw an error, this is bad : report this to the devs",
+            RemoteError => "Microsoft API threw an error, this is bad : report this to the devs",
             AlreadyLogged => "You already went through the auth process, please try again",
             UnknownState => "Can't find out who you are (session expired?) please try again",
             DatabaseError => "Database connection error, this is bad : report this to the server hoster"

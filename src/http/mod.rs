@@ -6,11 +6,12 @@ use rocket::response::{Response, Responder};
 use rocket::http::Status;
 
 use crate::database::DatabaseAccess;
+use crate::users::UserManager;
 
 mod auth;
 pub mod jwt;
 
-pub fn start() {
+pub fn start(users: UserManager) {
     rocket::ignite()
         .mount("/", routes![
             auth::start,
@@ -23,9 +24,8 @@ pub fn start() {
             form_error,
             unknown_error
         ])
-        .manage(
-            DatabaseAccess::new()
-        )
+        .manage(DatabaseAccess::new())
+        .manage(users)
         .launch();
 }
 
