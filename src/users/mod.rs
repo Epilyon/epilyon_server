@@ -5,6 +5,7 @@ pub mod auth;
 pub use cri::load_users;
 use auth::AuthSession;
 
+#[derive(Clone)]
 pub struct User {
     pub uid: usize,
     pub first_name: String,

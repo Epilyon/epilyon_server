@@ -48,7 +48,7 @@ impl AuthSession {
     }
 
     pub fn user(&self) -> Option<usize> {
-        self.identity.as_ref().map(|i| i.user) // TODO: Understand the "as_ref"
+        self.identity.as_ref().map(|i| i.user)
     }
 
     pub fn fail(&mut self, err: AuthError) {
@@ -94,7 +94,7 @@ impl fmt::Display for AuthError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use AuthError::*;
 
-        // TODO: Lang? Client-side? Unify with HttpError?
+        // TODO: Lang? Client-side?
         write!(f, "{}", match self {
             MissingMSVars => "Server setup error : Missing one of the MS .env var (did you copy the .env.example to .env ?)",
             RemoteError => "Microsoft API threw an error, this is bad : report this to the devs",

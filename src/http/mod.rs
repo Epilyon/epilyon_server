@@ -41,7 +41,7 @@ impl fmt::Display for HttpError {
 
         write!(f, "{}", match self {
             Unauthorized => "You must be logged to do that",
-            DatabaseError => "Database connection error, this is bad : report this to the server hoster", // TODO: feeling of déjà vu...
+            DatabaseError => "Database connection error, this is bad : report this to the server hoster",
         })
     }
 }

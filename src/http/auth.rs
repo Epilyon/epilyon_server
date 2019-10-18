@@ -6,11 +6,9 @@ use rocket_contrib::json::JsonValue;
 use uuid::Uuid;
 
 use crate::users::auth::{AuthSession, AuthState, AuthError};
-use crate::users::{microsoft, UserManager};
+use crate::users::{User, microsoft, UserManager};
 use crate::database::DatabaseAccess;
 use crate::http::HttpError;
-
-// TODO: Split those in src/auth/mod.rs IF NECESSARY (after CRI integration)
 
 #[get("/auth/start")] // TODO: Use POST
 pub fn start(db: State<DatabaseAccess>, mut cookies: Cookies) -> Result<JsonValue, HttpError> {
@@ -88,20 +86,22 @@ pub fn redirect(db: State<DatabaseAccess>, users: State<UserManager>, result: Fo
 }
 
 #[get("/auth/end")] // TODO: Use POST
-pub fn end(users: State<UserManager>, session: AuthSession) -> Result<JsonValue, HttpError> { // TODO: Use 'User' param
+pub fn end(users: State<UserManager>, session: AuthSession) -> Result<JsonValue, HttpError> {
     match session.state() { // TODO: Manage to use a if?
-        &AuthState::Ended => {},
-        _ => {
-            return Err(HttpError::Unauthorized)
-        }
-    }
-
-    match users.get_from_session(&session) {
-        Some(user) => Ok(json!({
-            "name": format!("{} {}", &user.first_name, &user.last_name),
-            "email": &user.email
-        })),
-        None => Err(HttpError::Unauthorized),
+        &AuthState::Ended => match users.get_from_session(&session) {
+            Some(user) => Ok(json!({
+                "id": &user.uid,
+                "name": format!("{} {}", &user.first_name, &user.last_name),
+                "email": &user.email,
+                "promo": &user.promo,
+                "region": &user.region
+            })),
+            None => {
+                error!("User session '{}' has no user associated with", session.user().unwrap());
+                Err(HttpError::Unauthorized)
+            },
+        },
+        _ => Err(HttpError::Unauthorized)
     }
 }
 
@@ -140,6 +140,22 @@ impl<'a, 'r> FromRequest<'a, 'r> for AuthSession {
     }
 }
 
+impl<'a, 'r> FromRequest<'a, 'r> for User {
+    type Error = HttpError;
+
+    fn from_request(request: &'a Request<'r>) -> Outcome<User, HttpError> {
+        let session = AuthSession::from_request(request)?;
+        let users = request.guard::<State<UserManager>>().unwrap(); // Can't fail
+
+        // TODO: Check tokens expiration
+
+        match users.get_from_session(&session) {
+            Some(u) => Outcome::Success(u.clone()),
+            None => Outcome::Failure((Status::Forbidden, HttpError::Unauthorized))
+        }
+    }
+}
+
 impl<'r> Responder<'r> for AuthError {
     fn respond_to(self, req: &Request) -> Result<Response<'r>, Status> {
         json!({
@@ -149,4 +165,4 @@ impl<'r> Responder<'r> for AuthError {
     }
 }
 
-// TODO: From request for 'User' : support token refresh
+// TODO: Refresh
