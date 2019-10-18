@@ -4,8 +4,9 @@ use std::env;
 use rocket::http::uri::Uri;
 use serde::Deserialize;
 
-use crate::auth::{AuthError, AuthIdentity};
+use crate::users::auth::{AuthError, AuthSession};
 use crate::http::jwt;
+use crate::users::UserManager;
 
 type AuthResult<T> = std::result::Result<T, AuthError>;
 
@@ -21,7 +22,7 @@ pub fn get_redirect_uri(state: &str, nonce: &str) -> AuthResult<String> {
     ))
 }
 
-pub fn acquire_token(code: &str) -> AuthResult<AuthIdentity> {
+pub fn identify(session: &mut AuthSession, users: &UserManager, code: &str) -> AuthResult<()> {
     let vars = MSEnvVars::get_result()?;
 
     let client = reqwest::Client::new();
@@ -44,18 +45,20 @@ pub fn acquire_token(code: &str) -> AuthResult<AuthIdentity> {
     match res {
         Ok(mut r) => {
             let auth_result: Result<AuthorizationResult, reqwest::Error> = r.json();
+            // TODO: Check nonce in id_token
 
             match auth_result {
                 Ok(json) => {
                     let jwt: Result<TokenContent, jwt::ParsingError> = jwt::decode(&json.access_token);
 
                     match jwt {
-                        Ok(content) => Ok(AuthIdentity::new(
-                            content.name,
-                            content.unique_name,
-                            json.access_token,
-                            json.refresh_token
-                        )),
+                        Ok(content) => session.identify(
+                            users,
+                            &content.unique_name,
+                            json.access_token.clone(),
+                            json.refresh_token.clone(),
+                            json.expires_in
+                        ),
                         Err(e) => {
                             error!("Failed to parse JWT '{}' : {}", &json.access_token, e);
                             Err(AuthError::RemoteError)

@@ -2,7 +2,7 @@ use std::{fmt, error};
 use std::sync::Mutex;
 use std::collections::HashMap;
 
-use crate::auth::AuthSession;
+use crate::users::auth::AuthSession;
 
 mod arango;
 
@@ -19,11 +19,10 @@ impl DatabaseAccess {
         }
     }
 
-    pub fn add_auth_session(&self, id: String, session: AuthSession) -> Result<()> {
+    pub fn add_auth_session(&self, id: String, session: AuthSession) -> Result<Option<AuthSession>> {
         match self.sessions.lock() {
             Ok(ref mut map) => {
-                map.insert(id, session);
-                Ok(())
+                Ok(map.insert(id, session))
             },
             Err(_) => Err(DatabaseError::PoisonedMutex)
         }
@@ -36,7 +35,7 @@ impl DatabaseAccess {
         }
     }
 
-    pub fn update_auth_session(&self, id: String, session: AuthSession) -> Result<()> {
+    pub fn update_auth_session(&self, id: String, session: AuthSession) -> Result<Option<AuthSession>> {
         self.add_auth_session(id, session)
     }
 

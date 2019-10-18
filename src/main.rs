@@ -8,6 +8,7 @@ extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
 extern crate chrono;
+extern crate time;
 extern crate uuid;
 extern crate dotenv;
 extern crate reqwest;
@@ -15,10 +16,9 @@ extern crate base64;
 
 mod http;
 mod database;
-mod auth;
 mod users;
 
-const VERSION: &'static str = "1.0.0";
+const VERSION: &'static str = "0.1.0";
 
 fn main() {
     if std::env::var("RUST_LOG").is_err() {

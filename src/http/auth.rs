@@ -2,11 +2,11 @@ use rocket::{State, Request};
 use rocket::http::{ContentType, Cookies, Cookie, Status};
 use rocket::request::{FromRequest, Outcome, Form};
 use rocket::response::{Content, Response, Redirect, Responder};
-use rocket_contrib::json::{JsonValue, Json};
+use rocket_contrib::json::JsonValue;
 use uuid::Uuid;
 
-use crate::auth::{AuthSession, AuthIdentity, AuthState, AuthError};
-use crate::auth::microsoft;
+use crate::users::auth::{AuthSession, AuthState, AuthError};
+use crate::users::{microsoft, UserManager};
 use crate::database::DatabaseAccess;
 use crate::http::HttpError;
 
@@ -39,7 +39,7 @@ pub fn login(session: AuthSession, mut cookies: Cookies) -> Result<Redirect, Aut
 }
 
 #[post("/auth/redirect", data = "<result>")]
-pub fn redirect(db: State<DatabaseAccess>, result: Form<LoginResult>) -> Result<Content<&'static str>, AuthError> {
+pub fn redirect(db: State<DatabaseAccess>, users: State<UserManager>, result: Form<LoginResult>) -> Result<Content<&'static str>, AuthError> {
     // TODO: Looks like Cookie isn't passed to the request, did not happen on POC, invest that... (currently getting state from ms, a bit insecure?)
 
     let db_result = db.get_auth_session(&result.state);
@@ -53,7 +53,7 @@ pub fn redirect(db: State<DatabaseAccess>, result: Form<LoginResult>) -> Result<
 
     if session_opt.is_none() {
         warn!("/auth/redirect called with unknown state '{}'", &result.state);
-        return Err(AuthError::UnknownState);
+        return Err(AuthError::UnknownSession);
     }
 
     let mut session = session_opt.unwrap();
@@ -62,37 +62,25 @@ pub fn redirect(db: State<DatabaseAccess>, result: Form<LoginResult>) -> Result<
         AuthState::Started => {},
         AuthState::Failed(_) => {
             warn!("/auth/redirect called from a failed session '{}'", &result.state);
-            return Err(AuthError::AlreadyLogged);
-        } ,
+            return Err(AuthError::InvalidState);
+        },
         AuthState::Ended | AuthState::Logged => {
-            warn!("/auth/redirect called by a logged user '{}'", &session.get_identity().unwrap().name);
-            return Err(AuthError::AlreadyLogged);
+            warn!("/auth/redirect called by a logged user '{}'", &users.get_from_session(&session).unwrap().email);
+            return Err(AuthError::InvalidState);
         }
     }
 
-    let token = microsoft::acquire_token(&result.code);
+    microsoft::identify(&mut session, users.inner(), &result.code)?;
 
-    // TODO: Better states (expiration plz)
+    let user = users.get_from_session(&session).unwrap();
 
-    match token {
-        Ok(identity) => {
-            // Can't fail, we already checked the auth state
-            let _ = session.login(identity); // let _ suppresses the warning, we already checked the state
-            let identity = session.get_identity().unwrap(); // I have to get the identity from here, because it was moved to the session
-
-            match db.update_auth_session(result.state.clone(), session.clone()) {
-                Ok(()) => {
-                    info!("Successfully logged user '{}' ({})", &identity.name, &identity.email);
-                },
-                Err(e) => {
-                    error!("Database error while updating auth session to log user '{}' : {}", &identity.name, e);
-                    session.fail(AuthError::DatabaseError);
-                }
-            }
+    match db.update_auth_session(result.state.clone(), session.clone()) {
+        Ok(_) => {
+            info!("Successfully logged user '{} {}' ({})", &user.first_name, &user.last_name, &user.email);
         },
         Err(e) => {
-            error!("Error acquiring auth tokens for state '{}' : {}", &result.state, e);
-            session.fail(e);
+            error!("Database error while updating auth session to log user '{}' : {}", &user.email, e);
+            session.fail(AuthError::DatabaseError);
         }
     }
 
@@ -100,7 +88,7 @@ pub fn redirect(db: State<DatabaseAccess>, result: Form<LoginResult>) -> Result<
 }
 
 #[get("/auth/end")] // TODO: Use POST
-pub fn end(session: AuthSession) -> Result<Json<AuthIdentity>, HttpError> {
+pub fn end(users: State<UserManager>, session: AuthSession) -> Result<JsonValue, HttpError> { // TODO: Use 'User' param
     match session.state() { // TODO: Manage to use a if?
         &AuthState::Ended => {},
         _ => {
@@ -108,8 +96,11 @@ pub fn end(session: AuthSession) -> Result<Json<AuthIdentity>, HttpError> {
         }
     }
 
-    match session.get_identity() {
-        Some(id) => Ok(Json(id)),
+    match users.get_from_session(&session) {
+        Some(user) => Ok(json!({
+            "name": format!("{} {}", &user.first_name, &user.last_name),
+            "email": &user.email
+        })),
         None => Err(HttpError::Unauthorized),
     }
 }
@@ -157,3 +148,5 @@ impl<'r> Responder<'r> for AuthError {
         }).respond_to(req)
     }
 }
+
+// TODO: From request for 'User' : support token refresh
