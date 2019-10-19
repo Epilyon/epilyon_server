@@ -1,5 +1,5 @@
 use rocket::{State, Request};
-use rocket::http::{ContentType, Cookies, Cookie, Status};
+use rocket::http::{ContentType, Cookies, Cookie, Status, SameSite};
 use rocket::request::{FromRequest, Outcome, Form};
 use rocket::response::{Content, Response, Redirect, Responder};
 use rocket_contrib::json::JsonValue;
@@ -10,7 +10,7 @@ use crate::users::{User, microsoft, UserManager};
 use crate::database::DatabaseAccess;
 use crate::http::HttpError;
 
-#[get("/auth/start")] // TODO: Use POST
+#[post("/auth/start")]
 pub fn start(db: State<DatabaseAccess>, mut cookies: Cookies) -> Result<JsonValue, HttpError> {
     let state = gen_uuid();
     let session = AuthSession::new(gen_uuid());
@@ -20,7 +20,10 @@ pub fn start(db: State<DatabaseAccess>, mut cookies: Cookies) -> Result<JsonValu
         return Err(HttpError::DatabaseError);
     }
 
-    cookies.add_private(Cookie::new("state", state.clone()));
+    let mut cookie = Cookie::new("state", state.clone());
+    cookie.set_same_site(SameSite::None);
+
+    cookies.add_private(cookie);
 
     // TODO: Rate limiting
 
@@ -82,10 +85,10 @@ pub fn redirect(db: State<DatabaseAccess>, users: State<UserManager>, result: Fo
         }
     }
 
-    Ok(Content(ContentType::HTML, "I must find a way to close this from the client app... anyway, you're logged <script>window.close();</script>"))
+    Ok(Content(ContentType::HTML, "<script>if (Epilyon) { Epilyon.postMessage('Close') }</script>")) // TODO: Move somewhere
 }
 
-#[get("/auth/end")] // TODO: Use POST
+#[post("/auth/end")]
 pub fn end(users: State<UserManager>, session: AuthSession) -> Result<JsonValue, HttpError> {
     match session.state() { // TODO: Manage to use a if?
         &AuthState::Ended => match users.get_from_session(&session) {
