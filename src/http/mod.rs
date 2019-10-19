@@ -9,7 +9,6 @@ use crate::database::DatabaseAccess;
 use crate::users::UserManager;
 
 mod auth;
-pub mod jwt;
 
 pub fn start(users: UserManager) {
     rocket::ignite()
@@ -21,6 +20,7 @@ pub fn start(users: UserManager) {
         ])
         .register(catchers![
             not_found,
+            forbidden,
             form_error,
             unknown_error
         ])
@@ -41,7 +41,7 @@ impl fmt::Display for HttpError {
 
         write!(f, "{}", match self {
             Unauthorized => "You must be logged to do that",
-            DatabaseError => "Database connection error, this is bad : report this to the server hoster",
+            DatabaseError => "Database connection error, this is bad : report this to the server hoster"
         })
     }
 }
@@ -65,7 +65,15 @@ impl<'r> Responder<'r> for HttpError {
 fn not_found<'r>(req: &Request) -> Result<Response<'r>, Status> {
     json!({
         "error": "Not found",
-        "message": format!("Can't find route  '{}'", req.uri().path())
+        "message": format!("Can't find route '{} {}'", req.method(), req.uri().path())
+    }).respond_to(req)
+}
+
+#[catch(403)]
+fn forbidden<'r>(req: &Request) -> Result<Response<'r>, Status> {
+    json!({
+        "error": "Unauthorized",
+        "message": format!("You aren't allowed to do this")
     }).respond_to(req)
 }
 

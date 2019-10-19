@@ -1,9 +1,13 @@
 use rocket::{State, Request};
-use rocket::http::{ContentType, Cookies, Cookie, Status, SameSite};
+use rocket::http::{ContentType, Status};
 use rocket::request::{FromRequest, Outcome, Form};
 use rocket::response::{Content, Response, Redirect, Responder};
 use rocket_contrib::json::JsonValue;
 use uuid::Uuid;
+use jwt::{Header as JwtHeader, Validation};
+use chrono::Utc;
+use time::Duration;
+use serde::{Deserialize, Serialize};
 
 use crate::users::auth::{AuthSession, AuthState, AuthError};
 use crate::users::{User, microsoft, UserManager};
@@ -11,38 +15,45 @@ use crate::database::DatabaseAccess;
 use crate::http::HttpError;
 
 #[post("/auth/start")]
-pub fn start(db: State<DatabaseAccess>, mut cookies: Cookies) -> Result<JsonValue, HttpError> {
+pub fn start(db: State<DatabaseAccess>) -> Result<JsonValue, AuthError> {
     let state = gen_uuid();
     let session = AuthSession::new(gen_uuid());
 
+    let secret = get_auth_secret()?;
+
     if let Err(e) = db.add_auth_session(state.clone(), session) {
         error!("Database error while adding session '{}' to database : {}", &state, e);
-        return Err(HttpError::DatabaseError);
+        return Err(AuthError::DatabaseError);
     }
 
-    let mut cookie = Cookie::new("state", state.clone());
-    cookie.set_same_site(SameSite::None);
-
-    cookies.add_private(cookie);
+    let claims = TokenClaims {
+        sub: state,
+        iss: "Epilyon".into(),
+        exp: (Utc::now() + Duration::days(14)).timestamp()
+    };
 
     // TODO: Rate limiting
 
-    Ok(json!({
-        "state_id": state
-    }))
+    match jwt::encode(&JwtHeader::default(), &claims, secret.as_ref()) {
+        Ok(token) => Ok(json!({
+            "token": token
+        })),
+        Err(e) => {
+            error!("Error while generating JWT for session '{}' : {}", &claims.sub, e);
+            Err(AuthError::TokenError)
+        }
+    }
 }
 
 #[get("/auth/login")]
-pub fn login(session: AuthSession, mut cookies: Cookies) -> Result<Redirect, AuthError> {
+pub fn login(session: AuthSession, claims: TokenClaims) -> Result<Redirect, AuthError> {
     // Cookie is unwrapped, because if it wasn't present the AuthSession FromRequest impl would have dropped an error
-    let uri = microsoft::get_redirect_uri( cookies.get_private("state").unwrap().value(), session.nonce())?;
+    let uri = microsoft::get_redirect_uri( &claims.sub, session.nonce())?;
     Ok(Redirect::found(uri))
 }
 
 #[post("/auth/redirect", data = "<result>")]
 pub fn redirect(db: State<DatabaseAccess>, users: State<UserManager>, result: Form<LoginResult>) -> Result<Content<&'static str>, AuthError> {
-    // TODO: Looks like Cookie isn't passed to the request, did not happen on POC, invest that... (currently getting state from ms, a bit insecure?)
-
     let db_result = db.get_auth_session(&result.state);
 
     if let Err(e) = db_result {
@@ -108,6 +119,13 @@ pub fn end(users: State<UserManager>, session: AuthSession) -> Result<JsonValue,
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenClaims {
+    sub: String,
+    iss: String,
+    exp: i64
+}
+
 #[derive(FromForm)]
 pub struct LoginResult {
     code: String,
@@ -116,8 +134,34 @@ pub struct LoginResult {
     session_state: String // Needed for Rocket to parse the response
 }
 
+fn get_auth_secret() -> Result<String, AuthError> {
+    std::env::var("AUTH_SECRET").map_err(|_| AuthError::MissingSecret)
+}
+
 fn gen_uuid() -> String {
     Uuid::new_v4().to_hyphenated().to_string()
+}
+
+impl<'a, 'r> FromRequest<'a, 'r> for TokenClaims {
+    type Error = HttpError;
+
+    fn from_request(request: &'a Request<'r>) -> Outcome<TokenClaims, HttpError> {
+        let auth = request.headers().get_one("Authorization");
+
+        if let Some(content) = auth {
+            let split: Vec<_> = content.split_ascii_whitespace().collect();
+
+            if let Some(token) = split.get(1) {
+                if let Ok(secret) = get_auth_secret() {
+                    if let Ok(result) = jwt::decode::<TokenClaims>(token, secret.as_ref(), &Validation::default()) {
+                        return Outcome::Success(result.claims.clone()); // TODO: Is there a better way ?
+                    }
+                }
+            }
+        }
+
+        Outcome::Failure((Status::Forbidden, HttpError::Unauthorized))
+    }
 }
 
 impl<'a, 'r> FromRequest<'a, 'r> for AuthSession {
@@ -125,15 +169,15 @@ impl<'a, 'r> FromRequest<'a, 'r> for AuthSession {
 
     fn from_request(request: &'a Request<'r>) -> Outcome<AuthSession, HttpError> {
         let db = request.guard::<State<DatabaseAccess>>().unwrap(); // Can't fail
-        let cookie = request.cookies().get_private("state");
+        let token = TokenClaims::from_request(request);
 
-        if let Some(cookie) = cookie {
-            match db.get_auth_session(cookie.value()) {
+        if let Outcome::Success(claims) = token {
+            match db.get_auth_session(&claims.sub) {
                 Ok(opt) => if let Some(sess) = opt {
                     return Outcome::Success(sess)
                 },
                 Err(e) => {
-                    error!("Database error while loading auth session '{}' : {}", cookie.value(), e);
+                    error!("Database error while loading auth session '{}' : {}", &claims.sub, e);
                     return Outcome::Failure((Status::InternalServerError, HttpError::DatabaseError))
                 }
             }
@@ -167,5 +211,6 @@ impl<'r> Responder<'r> for AuthError {
         }).respond_to(req)
     }
 }
+
 
 // TODO: Refresh

@@ -12,7 +12,7 @@ extern crate time;
 extern crate uuid;
 extern crate dotenv;
 extern crate reqwest;
-extern crate base64;
+extern crate jsonwebtoken as jwt;
 
 mod http;
 mod database;

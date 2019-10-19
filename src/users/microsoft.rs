@@ -5,7 +5,6 @@ use rocket::http::uri::Uri;
 use serde::Deserialize;
 
 use crate::users::auth::{AuthError, AuthSession};
-use crate::http::jwt;
 use crate::users::UserManager;
 
 type AuthResult<T> = std::result::Result<T, AuthError>;
@@ -49,12 +48,12 @@ pub fn identify(session: &mut AuthSession, users: &UserManager, code: &str) -> A
 
             match auth_result {
                 Ok(json) => {
-                    let jwt: Result<TokenContent, jwt::ParsingError> = jwt::decode(&json.access_token);
+                    let jwt = jwt::dangerous_unsafe_decode::<TokenContent>(&json.access_token);
 
                     match jwt {
                         Ok(content) => session.identify(
                             users,
-                            &content.unique_name,
+                            &content.claims.unique_name,
                             json.access_token.clone(),
                             json.refresh_token.clone(),
                             json.expires_in

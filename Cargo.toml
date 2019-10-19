@@ -15,6 +15,6 @@ time = "0.1.42"
 uuid = { version = "0.7.4", features = ["v4"] }
 dotenv = "0.14.1"
 reqwest = "0.9.22"
-base64 = "0.10.1"
 log = "0.4"
 pretty_env_logger = "0.3"
+jsonwebtoken = "5.0.1"

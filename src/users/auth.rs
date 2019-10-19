@@ -83,10 +83,12 @@ struct AuthIdentity {
 #[derive(PartialEq, Clone, Debug)]
 pub enum AuthError {
     MissingMSVars,
+    MissingSecret,
     RemoteError,
     InvalidState,
     UnknownSession,
     UnknownUser,
+    TokenError,
     DatabaseError // We do not pass the database error cause because it should not be displayed to the user
 }
 
@@ -96,11 +98,13 @@ impl fmt::Display for AuthError {
 
         // TODO: Lang? Client-side?
         write!(f, "{}", match self {
-            MissingMSVars => "Server setup error : Missing one of the MS .env var (did you copy the .env.example to .env ?)",
+            MissingMSVars => "Server setup error : Missing one of the MS .env var (did you copy the .env.example to .env?)",
+            MissingSecret => "Missing env var 'AUTH_SECRET' (did you copy the .env.example to .env?)",
             RemoteError => "Microsoft API threw an error, this is bad : report this to the devs",
-            InvalidState => "Your auth state is invalid for your request (trying to login while already logged ?)",
+            InvalidState => "Your auth state is invalid for your request (trying to login while already logged?)",
             UnknownSession => "Can't find out who you are (session expired?) please try again",
-            UnknownUser => "Can't find you in the CRI, are you still at the EPITA ? Contact the devs if you are",
+            UnknownUser => "Can't find you in the CRI, are you still at the EPITA? Contact the devs if you are",
+            TokenError => "Token creation failed, this is bad : report this to the devs",
             DatabaseError => "Database connection error, this is bad : report this to the server host"
         })
     }
