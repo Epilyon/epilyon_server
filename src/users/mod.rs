@@ -13,8 +13,12 @@ pub struct User {
     pub email: String,
     pub promo: String,
     pub region: String,
-    pub groups: Vec<String>,
-    pub session: Option<AuthSession>
+    pub groups: Vec<String>
+}
+
+pub struct LoggedUser {
+    pub user: User,
+    pub session: AuthSession
 }
 
 // TODO: Group system

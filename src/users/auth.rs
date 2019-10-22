@@ -100,7 +100,7 @@ impl fmt::Display for AuthError {
         write!(f, "{}", match self {
             MissingMSVars => "Server setup error : Missing one of the MS .env var (did you copy the .env.example to .env?)",
             MissingSecret => "Missing env var 'AUTH_SECRET' (did you copy the .env.example to .env?)",
-            RemoteError => "Microsoft API threw an error, this is bad : report this to the devs",
+            RemoteError => "Remote API threw an error or an invalid response, if you didn't edit the requests this is bad : report this to the devs",
             InvalidState => "Your auth state is invalid for your request (trying to login while already logged?)",
             UnknownSession => "Can't find out who you are (session expired?) please try again",
             UnknownUser => "Can't find you in the CRI, are you still at the EPITA? Contact the devs if you are",

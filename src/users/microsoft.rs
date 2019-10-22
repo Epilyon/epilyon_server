@@ -44,22 +44,42 @@ pub fn identify(session: &mut AuthSession, users: &UserManager, code: &str) -> A
     match res {
         Ok(mut r) => {
             let auth_result: Result<AuthorizationResult, reqwest::Error> = r.json();
-            // TODO: Check nonce in id_token
 
             match auth_result {
                 Ok(json) => {
                     let jwt = jwt::dangerous_unsafe_decode::<TokenContent>(&json.access_token);
+                    let id_jwt = jwt::dangerous_unsafe_decode::<IdTokenContent>(&json.id_token);
 
                     match jwt {
-                        Ok(content) => session.identify(
-                            users,
-                            &content.claims.unique_name,
-                            json.access_token.clone(),
-                            json.refresh_token.clone(),
-                            json.expires_in
-                        ),
+                        Ok(content) => match id_jwt {
+                            Ok(id_content) => {
+                                if id_content.claims.aud != vars.client_id {
+                                    error!("Client ID does not match id_token audience : '{}' != '{}'", &id_content.claims.aud, &vars.client_id);
+                                    return Err(AuthError::RemoteError);
+                                }
+
+                                if id_content.claims.nonce != session.nonce() {
+                                    error!("Nonce do not match : '{}' != '{}'", &id_content.claims.nonce, session.nonce());
+                                    return Err(AuthError::RemoteError);
+                                }
+
+                                // TODO: Check expiration of given tokens
+
+                                session.identify(
+                                    users,
+                                    &content.claims.unique_name,
+                                    json.access_token.clone(),
+                                    json.refresh_token.clone(),
+                                    json.expires_in
+                                )
+                            },
+                            Err(e) => {
+                                error!("Failed to parse id_token JWT '{}' : {}", &json.id_token, e);
+                                Err(AuthError::RemoteError)
+                            }
+                        },
                         Err(e) => {
-                            error!("Failed to parse JWT '{}' : {}", &json.access_token, e);
+                            error!("Failed to parse access_token JWT '{}' : {}", &json.access_token, e);
                             Err(AuthError::RemoteError)
                         }
                     }
@@ -116,4 +136,10 @@ struct AuthorizationResult {
 struct TokenContent {
     pub name: String,
     pub unique_name: String
+}
+
+#[derive(Deserialize)]
+struct IdTokenContent {
+    pub aud: String,
+    pub nonce: String
 }

@@ -9,13 +9,15 @@ mod arango;
 type Result<T> = std::result::Result<T, DatabaseError>;
 
 pub struct DatabaseAccess {
-    sessions: Mutex<HashMap<String, AuthSession>> // TODO: ArangoDB
+    sessions: Mutex<HashMap<String, AuthSession>>, // TODO: ArangoDB
+    expired_validers: Mutex<Vec<String>>
 }
 
 impl DatabaseAccess {
     pub fn new() -> DatabaseAccess {
         DatabaseAccess {
-            sessions: Mutex::new(HashMap::<String, AuthSession>::new()) // TODO: ArangoDB xd
+            sessions: Mutex::new(HashMap::<String, AuthSession>::new()), // TODO: ArangoDB xd
+            expired_validers: Mutex::new(Vec::new())
         }
     }
 
@@ -29,6 +31,8 @@ impl DatabaseAccess {
     }
 
     pub fn get_auth_session(&self, id: &str) -> Result<Option<AuthSession>> {
+        // TODO: Delete expired sessions
+
         match self.sessions.lock() {
             Ok(ref map) => Ok(map.get(id).map(|s| s.clone())),
             Err(_) => Err(DatabaseError::PoisonedMutex)
@@ -45,6 +49,23 @@ impl DatabaseAccess {
                 map.remove(id);
                 Ok(())
             },
+            Err(_) => Err(DatabaseError::PoisonedMutex)
+        }
+    }
+
+    pub fn expire_valider(&self, valider: String) -> Result<()> {
+        match self.expired_validers.lock() {
+            Ok(ref mut vec) => {
+                vec.push(valider);
+                Ok(())
+            },
+            Err(_) => Err(DatabaseError::PoisonedMutex)
+        }
+    }
+
+    pub fn is_valider_expired(&self, valider: &String) -> Result<bool> {
+        match self.expired_validers.lock() {
+            Ok(ref vec) => Ok(vec.contains(valider)),
             Err(_) => Err(DatabaseError::PoisonedMutex)
         }
     }

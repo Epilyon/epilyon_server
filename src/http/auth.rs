@@ -10,7 +10,7 @@ use time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::users::auth::{AuthSession, AuthState, AuthError};
-use crate::users::{User, microsoft, UserManager};
+use crate::users::{microsoft, UserManager, LoggedUser};
 use crate::database::DatabaseAccess;
 use crate::http::HttpError;
 
@@ -19,30 +19,16 @@ pub fn start(db: State<DatabaseAccess>) -> Result<JsonValue, AuthError> {
     let state = gen_uuid();
     let session = AuthSession::new(gen_uuid());
 
-    let secret = get_auth_secret()?;
-
     if let Err(e) = db.add_auth_session(state.clone(), session) {
         error!("Database error while adding session '{}' to database : {}", &state, e);
         return Err(AuthError::DatabaseError);
     }
 
-    let claims = TokenClaims {
-        sub: state,
-        iss: "Epilyon".into(),
-        exp: (Utc::now() + Duration::days(14)).timestamp()
-    };
-
     // TODO: Rate limiting
 
-    match jwt::encode(&JwtHeader::default(), &claims, secret.as_ref()) {
-        Ok(token) => Ok(json!({
-            "token": token
-        })),
-        Err(e) => {
-            error!("Error while generating JWT for session '{}' : {}", &claims.sub, e);
-            Err(AuthError::TokenError)
-        }
-    }
+    Ok(json!({
+        "token": gen_token(state)?
+    }))
 }
 
 #[get("/auth/login")]
@@ -101,7 +87,7 @@ pub fn redirect(db: State<DatabaseAccess>, users: State<UserManager>, result: Fo
 
 #[post("/auth/end")]
 pub fn end(users: State<UserManager>, session: AuthSession) -> Result<JsonValue, HttpError> {
-    match session.state() { // TODO: Manage to use a if?
+    match session.state() {
         &AuthState::Ended => match users.get_from_session(&session) {
             Some(user) => Ok(json!({
                 "id": &user.uid,
@@ -119,11 +105,40 @@ pub fn end(users: State<UserManager>, session: AuthSession) -> Result<JsonValue,
     }
 }
 
+#[post("/auth/refresh")]
+pub fn refresh(db: State<DatabaseAccess>, claims: TokenClaims, session: AuthSession) -> Result<JsonValue, AuthError> {
+    // TODO: Refresh MS connection
+
+    match db.expire_valider(claims.valider.clone()) {
+        Ok(()) => Ok(json!({
+            "token": gen_token(claims.sub.clone())?
+        })),
+        Err(e) => {
+            error!("Database error while expiring valider '{}' : {}", &claims.valider, e);
+            Err(AuthError::DatabaseError)
+        }
+    }
+}
+
+#[post("/auth/logout")]
+pub fn logout(db: State<DatabaseAccess>, claims: TokenClaims) -> Result<JsonValue, AuthError> {
+    match db.expire_valider(claims.valider.clone()) {
+        Ok(()) => Ok(json!({
+            "success": true
+        })),
+        Err(e) => {
+            error!("Database error while setting valider '{}' expired : {}", &claims.valider, e);
+            Err(AuthError::DatabaseError)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenClaims {
     sub: String,
     iss: String,
-    exp: i64
+    exp: i64,
+    valider: String
 }
 
 #[derive(FromForm)]
@@ -142,10 +157,30 @@ fn gen_uuid() -> String {
     Uuid::new_v4().to_hyphenated().to_string()
 }
 
+fn gen_token(state: String) -> Result<String, AuthError> {
+    let secret = get_auth_secret()?;
+
+    let claims = TokenClaims {
+        sub: state,
+        iss: "Epilyon".into(),
+        exp: (Utc::now() + Duration::days(14)).timestamp(),
+        valider: gen_uuid() // A token that can be invalidated during refresh
+    };
+
+    match jwt::encode(&JwtHeader::default(), &claims, secret.as_ref()) {
+        Ok(token) => Ok(token),
+        Err(e) => {
+            error!("Error while generating JWT for session '{}' : {}", &claims.sub, e);
+            Err(AuthError::TokenError)
+        }
+    }
+}
+
 impl<'a, 'r> FromRequest<'a, 'r> for TokenClaims {
     type Error = HttpError;
 
     fn from_request(request: &'a Request<'r>) -> Outcome<TokenClaims, HttpError> {
+        let db = request.guard::<State<DatabaseAccess>>().unwrap(); // Can't fail
         let auth = request.headers().get_one("Authorization");
 
         if let Some(content) = auth {
@@ -154,7 +189,15 @@ impl<'a, 'r> FromRequest<'a, 'r> for TokenClaims {
             if let Some(token) = split.get(1) {
                 if let Ok(secret) = get_auth_secret() {
                     if let Ok(result) = jwt::decode::<TokenClaims>(token, secret.as_ref(), &Validation::default()) {
-                        return Outcome::Success(result.claims.clone()); // TODO: Is there a better way ?
+                        match db.is_valider_expired(&result.claims.valider) {
+                            Ok(valid) => if valid {
+                                return Outcome::Success(result.claims.clone()); // TODO: Is there a better way ?
+                            },
+                            Err(e) => {
+                                error!("Database errr while checking valider '{}' : {}", &result.claims.valider, e);
+                                return Outcome::Failure((Status::InternalServerError, HttpError::DatabaseError));
+                            }
+                        }
                     }
                 }
             }
@@ -187,17 +230,18 @@ impl<'a, 'r> FromRequest<'a, 'r> for AuthSession {
     }
 }
 
-impl<'a, 'r> FromRequest<'a, 'r> for User {
+impl<'a, 'r> FromRequest<'a, 'r> for LoggedUser {
     type Error = HttpError;
 
-    fn from_request(request: &'a Request<'r>) -> Outcome<User, HttpError> {
+    fn from_request(request: &'a Request<'r>) -> Outcome<LoggedUser, HttpError> {
         let session = AuthSession::from_request(request)?;
         let users = request.guard::<State<UserManager>>().unwrap(); // Can't fail
 
-        // TODO: Check tokens expiration
-
         match users.get_from_session(&session) {
-            Some(u) => Outcome::Success(u.clone()),
+            Some(u) => Outcome::Success(LoggedUser {
+                user: u.clone(),
+                session
+            }),
             None => Outcome::Failure((Status::Forbidden, HttpError::Unauthorized))
         }
     }
@@ -211,6 +255,3 @@ impl<'r> Responder<'r> for AuthError {
         }).respond_to(req)
     }
 }
-
-
-// TODO: Refresh

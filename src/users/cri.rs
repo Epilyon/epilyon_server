@@ -39,8 +39,7 @@ fn load_promo(client: &CRIClient, promo: &str, users: &mut UserManager) -> CRIRe
                     email: remote.mail,
                     promo: remote.promo,
                     region: region.unwrap(),
-                    groups: Vec::new(), // TODO: Load user groups from database
-                    session: None
+                    groups: Vec::new() // TODO: Load user groups from database
                 });
             }
 
