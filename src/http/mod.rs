@@ -16,7 +16,9 @@ pub fn start(users: UserManager) {
             auth::start,
             auth::login,
             auth::redirect,
-            auth::end
+            auth::end,
+            auth::refresh,
+            auth::logout
         ])
         .register(catchers![
             not_found,

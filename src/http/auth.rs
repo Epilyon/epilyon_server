@@ -122,6 +122,8 @@ pub fn refresh(db: State<DatabaseAccess>, claims: TokenClaims, session: AuthSess
 
 #[post("/auth/logout")]
 pub fn logout(db: State<DatabaseAccess>, claims: TokenClaims) -> Result<JsonValue, AuthError> {
+    // TODO: Remove session from database
+    
     match db.expire_valider(claims.valider.clone()) {
         Ok(()) => Ok(json!({
             "success": true
