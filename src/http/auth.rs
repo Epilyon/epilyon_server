@@ -190,7 +190,7 @@ impl<'a, 'r> FromRequest<'a, 'r> for TokenClaims {
                 if let Ok(secret) = get_auth_secret() {
                     if let Ok(result) = jwt::decode::<TokenClaims>(token, secret.as_ref(), &Validation::default()) {
                         match db.is_valider_expired(&result.claims.valider) {
-                            Ok(valid) => if valid {
+                            Ok(expired) => if !expired {
                                 return Outcome::Success(result.claims.clone()); // TODO: Is there a better way ?
                             },
                             Err(e) => {
