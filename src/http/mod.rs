@@ -1,16 +1,15 @@
-use std::fmt;
-use std::error::Error;
-
 use rocket::request::Request;
 use rocket::response::{Response, Responder};
 use rocket::http::Status;
 
 use crate::database::DatabaseAccess;
-use crate::users::UserManager;
+use crate::users::{UserManager, StateManager};
+use crate::sync::AsyncObj;
+use crate::error::EpiError;
 
 mod auth;
 
-pub fn start(users: UserManager) {
+pub fn start(db: AsyncObj<DatabaseAccess>, users: AsyncObj<UserManager>, states: AsyncObj<StateManager>) {
     rocket::ignite()
         .mount("/", routes![
             auth::start,
@@ -24,35 +23,14 @@ pub fn start(users: UserManager) {
             form_error,
             unknown_error
         ])
-        .manage(DatabaseAccess::new())
+        .manage(db)
         .manage(users)
+        .manage(states)
         .launch();
 }
 
-#[derive(Debug)]
-pub enum HttpError {
-    Unauthorized,
-    DatabaseError
-}
 
-impl fmt::Display for HttpError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use HttpError::*;
-
-        write!(f, "{}", match self {
-            Unauthorized => "You must be logged to do that",
-            DatabaseError => "Database connection error, this is bad : report this to the server hoster"
-        })
-    }
-}
-
-impl Error for HttpError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        None
-    }
-}
-
-impl<'r> Responder<'r> for HttpError {
+impl<'r> Responder<'r> for EpiError {
     fn respond_to(self, req: &Request) -> Result<Response<'r>, Status> {
         json!({
             "error": "General error",

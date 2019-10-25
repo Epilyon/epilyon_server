@@ -1,8 +1,12 @@
-mod cri;
 pub mod microsoft;
 pub mod auth;
+pub mod state;
+
+mod cri;
 
 pub use cri::load_users;
+pub use state::StateManager;
+
 use auth::AuthSession;
 
 #[derive(Clone)]
@@ -33,7 +37,7 @@ pub struct UserManager {
 }
 
 impl UserManager {
-    fn new() -> Self {
+    pub fn new() -> Self {
         UserManager {
             users: Vec::new()
         }

@@ -3,13 +3,13 @@ use std::env;
 
 use rocket::http::uri::Uri;
 use serde::Deserialize;
+use chrono::{DateTime, Utc};
 
-use crate::users::auth::{AuthError, AuthSession};
+use crate::users::auth::{AuthIdentity, AuthSession};
 use crate::users::UserManager;
+use crate::error::{EpiResult, EpiError};
 
-type AuthResult<T> = std::result::Result<T, AuthError>;
-
-pub fn get_redirect_uri(state: &str, nonce: &str) -> AuthResult<String> {
+pub fn get_redirect_uri(state: &str, nonce: &str) -> EpiResult<String> {
     MSEnvVars::get_result().map(|vars| format!(
         "{}/oauth2/v2.0/authorize?response_type=code&response_mode=form_post&redirect_uri={}&client_id={}&scope={}&prompt=select_account&state={}&nonce={}",
         &vars.tenant_url,
@@ -21,7 +21,7 @@ pub fn get_redirect_uri(state: &str, nonce: &str) -> AuthResult<String> {
     ))
 }
 
-pub fn identify(session: &mut AuthSession, users: &UserManager, code: &str) -> AuthResult<()> {
+pub fn identify(session: &mut AuthSession, users: &UserManager, code: &str) -> EpiResult<()> {
     let vars = MSEnvVars::get_result()?;
 
     let client = reqwest::Client::new();
@@ -55,12 +55,12 @@ pub fn identify(session: &mut AuthSession, users: &UserManager, code: &str) -> A
                             Ok(id_content) => {
                                 if id_content.claims.aud != vars.client_id {
                                     error!("Client ID does not match id_token audience : '{}' != '{}'", &id_content.claims.aud, &vars.client_id);
-                                    return Err(AuthError::RemoteError);
+                                    return Err(EpiError::RemoteError);
                                 }
 
                                 if id_content.claims.nonce != session.nonce() {
                                     error!("Nonce do not match : '{}' != '{}'", &id_content.claims.nonce, session.nonce());
-                                    return Err(AuthError::RemoteError);
+                                    return Err(EpiError::RemoteError);
                                 }
 
                                 // TODO: Check expiration of given tokens
@@ -75,24 +75,50 @@ pub fn identify(session: &mut AuthSession, users: &UserManager, code: &str) -> A
                             },
                             Err(e) => {
                                 error!("Failed to parse id_token JWT '{}' : {}", &json.id_token, e);
-                                Err(AuthError::RemoteError)
+                                Err(EpiError::RemoteError)
                             }
                         },
                         Err(e) => {
                             error!("Failed to parse access_token JWT '{}' : {}", &json.access_token, e);
-                            Err(AuthError::RemoteError)
+                            Err(EpiError::RemoteError)
                         }
                     }
                 },
                 Err(e) => {
-                    error!("Failed to parse response JSON '{}' : {}", &r.text().unwrap(), e);
-                    Err(AuthError::RemoteError)
+                    error!("Failed to parse response JSON : {}", e);
+                    Err(EpiError::RemoteError)
                 }
             }
         },
         Err(e) => {
             error!("Failed to execute OAuth token request : {}", e);
-            Err(AuthError::RemoteError)
+            Err(EpiError::RemoteError)
+        }
+    }
+}
+
+pub fn get_mails(identity: &AuthIdentity) -> EpiResult<Vec<Mail>> {
+    let client = reqwest::Client::new();
+
+    let res = client.post("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages")
+        .header("Authorization", format!("Bearer {}", identity.access_token()))
+        .send();
+
+    match res {
+        Ok(mut response) => {
+            let json: Result<MSResponse<Vec<Mail>>, reqwest::Error> = response.json();
+
+            match json {
+                Ok(content) => Ok(content.value),
+                Err(e) => {
+                    error!("Error while during deserialization of mail listing request response from Microsoft : {}", e);
+                    Err(EpiError::RemoteError)
+                }
+            }
+        },
+        Err(e) => {
+            error!("Error while sending mail listing request to Microsoft : {}", e);
+            Err(EpiError::RemoteError)
         }
     }
 }
@@ -116,10 +142,10 @@ impl MSEnvVars {
         })
     }
 
-    fn get_result() -> AuthResult<MSEnvVars> {
+    fn get_result() -> EpiResult<MSEnvVars> {
         match Self::get() {
             Some(vars) => Ok(vars),
-            None => Err(AuthError::MissingMSVars)
+            None => Err(EpiError::MissingVar)
         }
     }
 }
@@ -142,4 +168,31 @@ struct TokenContent {
 struct IdTokenContent {
     pub aud: String,
     pub nonce: String
+}
+
+#[derive(Deserialize)]
+struct MSResponse<T> {
+    value: T
+}
+
+#[allow(non_snake_case)] // This is from a JSON, we can't change that
+#[derive(Deserialize)]
+pub struct Mail {
+    pub id: String,
+    pub receivedDateTime: DateTime<Utc>,
+    pub hasAttachments: bool,
+    pub subject: String,
+    pub sender: MailSender
+}
+
+#[allow(non_snake_case)]
+#[derive(Deserialize)]
+pub struct MailSender {
+    pub emailAddress: MailAddress
+}
+
+#[derive(Deserialize)]
+pub struct MailAddress {
+    pub name: String,
+    pub address: String
 }

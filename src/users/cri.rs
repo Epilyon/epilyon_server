@@ -1,25 +1,23 @@
-use std::fmt;
-use std::error::Error;
 use std::env;
 
 use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::users::{User, UserManager};
+use crate::error::{EpiResult, EpiError};
 
-type CRIResult<T> = std::result::Result<T, CRIError>;
+// TODO: Cache CRI users in case of the CRI being down
 
-pub fn load_users() -> CRIResult<UserManager> {
+pub fn load_users(users: &mut UserManager) -> EpiResult<()> {
     let client = CRIClient::new()?;
-    let mut users = UserManager::new();
 
     for promo in client.vars.promos.iter() {
-        load_promo(&client, promo, &mut users)?;
+        load_promo(&client, promo, users)?;
     }
 
-    Ok(users)
+    Ok(())
 }
 
-fn load_promo(client: &CRIClient, promo: &str, users: &mut UserManager) -> CRIResult<()> {
+fn load_promo(client: &CRIClient, promo: &str, users: &mut UserManager) -> EpiResult<()> {
     let result: reqwest::Result<UsersListResponse> = client.request(&format!("/api/users/?limit=2000&promo={}", promo)); // A bit dirty, but fast
 
     match result {
@@ -28,7 +26,7 @@ fn load_promo(client: &CRIClient, promo: &str, users: &mut UserManager) -> CRIRe
                 let mut region = get_region(&remote);
 
                 if region.is_none() {
-                    warn!("Can't find region for user '{}', setting Paris", remote.login);
+                    warn!("Can't find region for user '{}', using Paris", remote.login);
                     region = Some("Paris".into());
                 }
 
@@ -47,7 +45,7 @@ fn load_promo(client: &CRIClient, promo: &str, users: &mut UserManager) -> CRIRe
         },
         Err(e) => {
             error!("CRI API threw an error during list request for promo '{}' : {}", promo, e);
-            Err(CRIError::RemoteError)
+            Err(EpiError::RemoteError)
         }
     }
 }
@@ -106,7 +104,7 @@ struct CRIClient {
 }
 
 impl CRIClient {
-    fn new() -> CRIResult<Self> {
+    fn new() -> EpiResult<Self> {
         Ok(CRIClient {
             vars: CRIEnvVars::get_result()?,
             http: reqwest::Client::new()
@@ -141,34 +139,10 @@ impl CRIEnvVars {
         })
     }
 
-    fn get_result() -> CRIResult<CRIEnvVars> {
+    fn get_result() -> EpiResult<CRIEnvVars> {
         match Self::get() {
             Some(vars) => Ok(vars),
-            None => Err(CRIError::MissingVars)
+            None => Err(EpiError::MissingVar)
         }
-    }
-}
-
-#[derive(Debug)]
-pub enum CRIError {
-    MissingVars,
-    RemoteError
-}
-
-impl fmt::Display for CRIError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use CRIError::*;
-
-        // TODO: Lang? Client-side?
-        write!(f, "{}", match self {
-            MissingVars => "Server setup error : Missing one of the CRI .env var (did you copy the .env.example to .env ?)",
-            RemoteError => "CRI API threw an error or a malformed response, this is bad : report this to the devs",
-        })
-    }
-}
-
-impl Error for CRIError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        None
     }
 }

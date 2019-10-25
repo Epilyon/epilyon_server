@@ -8,6 +8,8 @@ mod arango;
 
 type Result<T> = std::result::Result<T, DatabaseError>;
 
+// TODO: Remove Mutex, Rust doesn't work like that
+
 pub struct DatabaseAccess {
     sessions: Mutex<HashMap<String, AuthSession>>, // TODO: ArangoDB
     expired_validers: Mutex<Vec<String>>
@@ -16,16 +18,21 @@ pub struct DatabaseAccess {
 impl DatabaseAccess {
     pub fn new() -> DatabaseAccess {
         DatabaseAccess {
-            sessions: Mutex::new(HashMap::<String, AuthSession>::new()), // TODO: ArangoDB xd
+            sessions: Mutex::new(HashMap::<String, AuthSession>::new()),
             expired_validers: Mutex::new(Vec::new())
+        }
+    }
+
+    pub fn get_auth_sessions(&self) -> Result<Vec<AuthSession>> {
+        match self.sessions.lock() {
+            Ok(ref map) => Ok(map.values().map(|s| s.clone()).collect()),
+            Err(_) => Err(DatabaseError::PoisonedMutex)
         }
     }
 
     pub fn add_auth_session(&self, id: String, session: AuthSession) -> Result<Option<AuthSession>> {
         match self.sessions.lock() {
-            Ok(ref mut map) => {
-                Ok(map.insert(id, session))
-            },
+            Ok(ref mut map) => Ok(map.insert(id, session)),
             Err(_) => Err(DatabaseError::PoisonedMutex)
         }
     }
@@ -75,8 +82,7 @@ impl DatabaseAccess {
 pub enum DatabaseError {
     ConnectionFailure,
     SetupError,
-    PoisonedMutex,
-    // TODO: ArangoError
+    PoisonedMutex
 }
 
 impl fmt::Display for DatabaseError {
@@ -87,13 +93,12 @@ impl fmt::Display for DatabaseError {
             ConnectionFailure => "Database connection failure",
             SetupError => "Database setup mistake",
             PoisonedMutex => "Another thread panicked during database task execution, mutex is poisoned"
-            // TODO: ArangoError
         })
     }
 }
 
 impl error::Error for DatabaseError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        None // TODO: Arango error if there's one
+        None
     }
 }
