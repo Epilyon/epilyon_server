@@ -15,7 +15,9 @@ pub fn start(db: AsyncObj<DatabaseAccess>, users: AsyncObj<UserManager>, states:
             auth::start,
             auth::login,
             auth::redirect,
-            auth::end
+            auth::end,
+            auth::refresh,
+            auth::logout
         ])
         .register(catchers![
             not_found,
