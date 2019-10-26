@@ -48,6 +48,16 @@ impl AuthSession {
         self.identity.as_ref().map(|i| i.user)
     }
 
+    pub fn log(&mut self) -> EpiResult<()> {
+        if self.state != AuthState::Ended {
+            return Err(EpiError::InvalidState);
+        }
+
+        self.state = AuthState::Logged;
+
+        Ok(())
+    }
+
     pub fn fail(&mut self, err: EpiError) {
         self.state = AuthState::Failed(err)
     }

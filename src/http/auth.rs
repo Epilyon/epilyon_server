@@ -12,10 +12,11 @@ use time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::users::auth::{AuthSession, AuthState};
-use crate::users::{microsoft, UserManager, LoggedUser};
+use crate::users::{microsoft, UserManager, LoggedUser, StateManager};
 use crate::database::DatabaseAccess;
 use crate::error::{EpiResult, EpiError};
 use crate::sync::{AsyncState, EpiLock};
+use crate::refresh::refresh as do_refresh;
 
 #[post("/auth/start")]
 pub fn start(db: AsyncState<DatabaseAccess>) -> EpiResult<JsonValue> {
@@ -92,16 +93,25 @@ pub fn redirect(db: AsyncState<DatabaseAccess>, users: AsyncState<UserManager>, 
 }
 
 #[post("/auth/end")]
-pub fn end(users: AsyncState<UserManager>, session: AuthSession) -> EpiResult<JsonValue> {
+pub fn end(users: AsyncState<UserManager>, states: AsyncState<StateManager>, session: AuthSession) -> EpiResult<JsonValue> {
     match session.state() {
-        &AuthState::Ended => match users.epilock().get_from_session(&session) {
-            Some(user) => Ok(json!({
-                "id": &user.uid,
-                "name": format!("{} {}", &user.first_name, &user.last_name),
-                "email": &user.email,
-                "promo": &user.promo,
-                "region": &user.region
-            })),
+        &AuthState::Ended | &AuthState::Logged => match users.epilock().get_from_session(&session) {
+            Some(user) => {
+                let logged = LoggedUser {
+                    user: user.clone(),
+                    session: session.clone()
+                };
+
+                do_refresh(states.inner(), &logged)?;
+
+                Ok(json!({
+                    "id": &user.uid,
+                    "name": format!("{} {}", &user.first_name, &user.last_name),
+                    "email": &user.email,
+                    "promo": &user.promo,
+                    "region": &user.region
+                }))
+            },
             None => {
                 error!("User session '{}' has no user associated with", session.user().unwrap());
                 Err(EpiError::Unauthorized)

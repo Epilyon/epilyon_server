@@ -97,10 +97,10 @@ pub fn identify(session: &mut AuthSession, users: &UserManager, code: &str) -> E
     }
 }
 
-pub fn get_mails(identity: &AuthIdentity) -> EpiResult<Vec<Mail>> {
+pub fn get_mails(identity: &AuthIdentity, count: u8) -> EpiResult<Vec<Mail>> { // TODO: Filter
     let client = reqwest::Client::new();
 
-    let res = client.post("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages")
+    let res = client.get(format!("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$select=id,receivedDateTime,hasAttachments,subject,sender&$count={}", count))
         .header("Authorization", format!("Bearer {}", identity.access_token()))
         .send();
 

@@ -15,7 +15,7 @@ impl StateManager {
         }
     }
 
-    pub fn get_for_user(&self, id: usize) -> Option<&UserState> {
+    pub fn get_for_user(&self, id: usize) -> Option<&UserState> { // Some if state = Logged
         self.states.get(&id)
     }
 

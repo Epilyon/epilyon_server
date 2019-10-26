@@ -20,7 +20,7 @@ pub struct User {
     pub groups: Vec<String>
 }
 
-pub struct LoggedUser {
+pub struct LoggedUser { // TODO: Use references maybe? Lifetimes aren't that scary
     pub user: User,
     pub session: AuthSession
 }

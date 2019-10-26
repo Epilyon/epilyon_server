@@ -8,7 +8,7 @@ use crate::sync::{AsyncObj, EpiLock};
 use crate::error::EpiResult;
 
 pub fn schedule_refresh<F: 'static>(states: AsyncObj<StateManager>, get_users: F) where F: Send + Fn() -> EpiResult<Vec<LoggedUser>> {
-    thread::spawn(move || {
+    thread::spawn(move || loop {
         let result = get_users();
         if result.is_err() {
             error!("Couldn't retrieve users for the refresh process, skipping iteration");
@@ -19,23 +19,24 @@ pub fn schedule_refresh<F: 'static>(states: AsyncObj<StateManager>, get_users: F
 
         debug!("Starting refresh process for {} users...", users.len());
 
-        users.iter().for_each(|u| {
-            debug!("Refreshing user '{} {}'...", &u.user.first_name, &u.user.last_name);
-
-            match refresh_user(u) {
-                Ok(state) => {
-                    states.epilock().update(u.user.uid.clone(), state);
-                    debug!("Successfully refresh user");
-                },
-                Err(e) => {
-                    error!("Error during refresh, skipping user : {}", e);
-                }
+        for user in users.iter() {
+            if let Err(e) = refresh(&states, user) {
+                error!("Error during refresh, skipping user : {}", e);
             }
-        });
+        }
 
         debug!("Successfully refreshed {} users", users.len());
         thread::sleep(Duration::from_secs(300)); // TODO: Move refresh rate in .env
     });
+}
+
+pub fn refresh(states: &AsyncObj<StateManager>, user: &LoggedUser) -> EpiResult<()> {
+    debug!("Refreshing user '{} {}'...", &user.user.first_name, &user.user.last_name);
+
+    refresh_user(user).map(|state| {
+        states.epilock().update(user.user.uid.clone(), state);
+        debug!("Successfully refresh user");
+    })
 }
 
 fn refresh_user(user: &LoggedUser) -> EpiResult<UserState> {
@@ -47,7 +48,7 @@ fn refresh_user(user: &LoggedUser) -> EpiResult<UserState> {
 }
 
 fn get_last_qcm(user: &LoggedUser) -> EpiResult<Option<QCMResult>> {
-    let mails = microsoft::get_mails(user.session.identity().unwrap())?; // User is logged so has he an identity
+    let mails = microsoft::get_mails(user.session.identity().unwrap(), 20)?; // User is logged so has he an identity
 
     for mail in mails.iter() {
         println!("Mail from '{}' received at '{}' with subject '{}'", &mail.sender.emailAddress.address, &mail.receivedDateTime, &mail.subject);
