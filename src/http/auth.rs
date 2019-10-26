@@ -123,7 +123,8 @@ pub fn end(users: AsyncState<UserManager>, states: AsyncState<StateManager>, mut
 }
 
 #[post("/auth/refresh")]
-pub fn refresh(db: AsyncState<DatabaseAccess>, claims: TokenClaims) -> EpiResult<JsonValue> {
+pub fn refresh(db: AsyncState<DatabaseAccess>, claims: TokenClaims, _user: LoggedUser) -> EpiResult<JsonValue> {
+    // LoggedUser is passed so the whole token check process is went through
     // TODO: Refresh MS connection
 
     match db.epilock().expire_valider(claims.valider.clone()) {
