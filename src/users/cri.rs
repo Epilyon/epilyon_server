@@ -78,8 +78,6 @@ fn capitalize(s: &str) -> String {
 #[derive(Deserialize)]
 struct UsersListResponse {
     count: usize,
-    next: Option<String>,
-    previous: Option<String>,
     results: Vec<UserResponse>
 }
 
@@ -88,7 +86,6 @@ struct UsersListResponse {
 struct UserResponse {
     login: String,
     uidNumber: usize,
-    gidNumber: usize,
     mail: String,
     lastname: String,
     firstname: String,

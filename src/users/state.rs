@@ -1,5 +1,5 @@
 use serde::Serialize;
-use chrono::{DateTime, Utc};
+use chrono::NaiveDate;
 use std::collections::HashMap;
 
 pub struct StateManager {
@@ -32,7 +32,7 @@ pub struct UserState {
 #[derive(Serialize)]
 pub struct QCMResult {
     #[serde(skip_serializing)]
-    last_mail: String, // MS id of the last QCM result mail, client don't need this
-    date: DateTime<Utc>,
-    values: HashMap<String, u8>
+    pub last_mail: String, // MS id of the last QCM result mail, client don't need this
+    pub date: NaiveDate,
+    pub values: HashMap<String, f32>
 }

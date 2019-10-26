@@ -13,6 +13,7 @@ extern crate uuid;
 extern crate dotenv;
 extern crate reqwest;
 extern crate jsonwebtoken as jwt;
+extern crate base64;
 
 mod http;
 mod database;

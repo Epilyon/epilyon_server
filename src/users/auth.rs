@@ -4,6 +4,8 @@ use time::Duration;
 use crate::users::UserManager;
 use crate::error::{EpiResult, EpiError};
 
+// TODO: Should all auth tokens be invalidated on logout ?
+
 #[derive(Clone)]
 pub struct AuthSession {
     state: AuthState,

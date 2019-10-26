@@ -8,6 +8,7 @@ use crate::sync::AsyncObj;
 use crate::error::EpiError;
 
 mod auth;
+mod state;
 
 pub fn start(db: AsyncObj<DatabaseAccess>, users: AsyncObj<UserManager>, states: AsyncObj<StateManager>) {
     rocket::ignite()
@@ -17,7 +18,9 @@ pub fn start(db: AsyncObj<DatabaseAccess>, users: AsyncObj<UserManager>, states:
             auth::redirect,
             auth::end,
             auth::refresh,
-            auth::logout
+            auth::logout,
+
+            state::get
         ])
         .register(catchers![
             not_found,

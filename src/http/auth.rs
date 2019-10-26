@@ -93,7 +93,7 @@ pub fn redirect(db: AsyncState<DatabaseAccess>, users: AsyncState<UserManager>, 
 }
 
 #[post("/auth/end")]
-pub fn end(users: AsyncState<UserManager>, states: AsyncState<StateManager>, session: AuthSession) -> EpiResult<JsonValue> {
+pub fn end(users: AsyncState<UserManager>, states: AsyncState<StateManager>, mut session: AuthSession) -> EpiResult<JsonValue> {
     match session.state() {
         &AuthState::Ended | &AuthState::Logged => match users.epilock().get_from_session(&session) {
             Some(user) => {
@@ -103,6 +103,7 @@ pub fn end(users: AsyncState<UserManager>, states: AsyncState<StateManager>, ses
                 };
 
                 do_refresh(states.inner(), &logged)?;
+                session.log()?;
 
                 Ok(json!({
                     "id": &user.uid,

@@ -97,10 +97,11 @@ pub fn identify(session: &mut AuthSession, users: &UserManager, code: &str) -> E
     }
 }
 
-pub fn get_mails(identity: &AuthIdentity, count: u8) -> EpiResult<Vec<Mail>> { // TODO: Filter
+// TODO: Generify such requests
+pub fn get_mails(identity: &AuthIdentity, filter: &str) -> EpiResult<Vec<Mail>> { // TODO: Filter
     let client = reqwest::Client::new();
 
-    let res = client.get(format!("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$select=id,receivedDateTime,hasAttachments,subject,sender&$count={}", count))
+    let res = client.get(&format!("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$select=id,receivedDateTime,hasAttachments,subject,sender&$filter={}", filter))
         .header("Authorization", format!("Bearer {}", identity.access_token()))
         .send();
 
@@ -111,13 +112,39 @@ pub fn get_mails(identity: &AuthIdentity, count: u8) -> EpiResult<Vec<Mail>> { /
             match json {
                 Ok(content) => Ok(content.value),
                 Err(e) => {
-                    error!("Error while during deserialization of mail listing request response from Microsoft : {}", e);
+                    error!("Error during deserialization of mail listing response from Microsoft : {}", e);
                     Err(EpiError::RemoteError)
                 }
             }
         },
         Err(e) => {
             error!("Error while sending mail listing request to Microsoft : {}", e);
+            Err(EpiError::RemoteError)
+        }
+    }
+}
+
+pub fn get_first_attachment(identity: &AuthIdentity, mail: &Mail, filter: &str) -> EpiResult<Option<Attachment>> {
+    let client = reqwest::Client::new();
+
+    let res = client.get(&format!("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/{}/attachments?$filter={}", &mail.id, filter))
+        .header("Authorization", format!("Bearer {}", identity.access_token()))
+        .send();
+
+    match res {
+        Ok(mut response) => {
+            let json: Result<MSResponse<Vec<Attachment>>, reqwest::Error> = response.json();
+
+            match json {
+                Ok(content) => Ok(content.value.first().map(|a| a.clone())),
+                Err(e) => {
+                    error!("Error during deserialization of attachment listing response from Microsoft : {}", e);
+                    Err(EpiError::RemoteError)
+                }
+            }
+        },
+        Err(e) => {
+            error!("Error while sending attachments listing request to Microsoft : {}", e);
             Err(EpiError::RemoteError)
         }
     }
@@ -195,4 +222,11 @@ pub struct MailSender {
 pub struct MailAddress {
     pub name: String,
     pub address: String
+}
+
+#[allow(non_snake_case)] // This is from a JSON, we can't change that
+#[derive(Clone, Deserialize)]
+pub struct Attachment {
+    pub name: String,
+    pub contentBytes: String
 }
