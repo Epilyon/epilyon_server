@@ -124,6 +124,7 @@ pub fn end(users: AsyncState<UserManager>, states: AsyncState<StateManager>, mut
 
 #[post("/auth/refresh")]
 pub fn refresh(db: AsyncState<DatabaseAccess>, claims: TokenClaims, _user: LoggedUser) -> EpiResult<JsonValue> {
+    // TODO: Remove _user: LoggedUser, manage this correctly client-side instead
     // LoggedUser is passed so the whole token check process is went through
     // TODO: Refresh MS connection
 

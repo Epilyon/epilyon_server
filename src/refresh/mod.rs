@@ -41,7 +41,6 @@ pub fn refresh(states: &AsyncObj<StateManager>, user: &LoggedUser) -> EpiResult<
 
     refresh_user(user).map(|state| {
         states.epilock().update(user.user.uid.clone(), state);
-        debug!("Successfully refresh user");
     })
 }
 
