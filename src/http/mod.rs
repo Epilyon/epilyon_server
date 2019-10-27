@@ -1,6 +1,7 @@
 use rocket::request::Request;
 use rocket::response::{Response, Responder};
-use rocket::http::Status;
+use rocket::http::{Status, Header};
+use rocket::fairing::{Fairing, Info, Kind};
 
 use crate::database::DatabaseAccess;
 use crate::users::{UserManager, StateManager};
@@ -31,9 +32,9 @@ pub fn start(db: AsyncObj<DatabaseAccess>, users: AsyncObj<UserManager>, states:
         .manage(db)
         .manage(users)
         .manage(states)
+        .attach(UTF8Responder {})
         .launch();
 }
-
 
 impl<'r> Responder<'r> for EpiError {
     fn respond_to(self, req: &Request) -> Result<Response<'r>, Status> {
@@ -41,6 +42,25 @@ impl<'r> Responder<'r> for EpiError {
             "error": "General error",
             "message": format!("{}", self)
         }).respond_to(req)
+    }
+}
+
+struct UTF8Responder;
+
+impl Fairing for UTF8Responder {
+    fn info(&self) -> Info {
+        Info {
+            name: "UTF-8 Responder",
+            kind: Kind::Response
+        }
+    }
+
+    fn on_response(&self, _request: &Request, response: &mut Response) {
+        let header = response.headers().get_one("Content-Type");
+
+        if header.is_some() && header.unwrap() == "application/json" {
+            response.set_header(Header::new("Content-Type", "application/json; charset=utf-8"));
+        }
     }
 }
 
