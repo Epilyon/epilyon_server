@@ -141,9 +141,14 @@ pub fn refresh(db: AsyncState<DatabaseAccess>, claims: TokenClaims, _user: Logge
 
 #[post("/auth/logout")]
 pub fn logout(db: AsyncState<DatabaseAccess>, claims: TokenClaims) -> EpiResult<JsonValue> {
-    // TODO: Remove session from database
+    let db = db.epilock();
 
-    match db.epilock().expire_valider(claims.valider.clone()) {
+    db.remove_auth_session(&claims.sub).map_err(|e| {
+        error!("Database error while removing auth session '{}' : {}", &claims.sub, e);
+        EpiError::DatabaseError
+    })?;
+
+    match db.expire_valider(claims.valider.clone()) {
         Ok(()) => Ok(json!({
             "success": true
         })),

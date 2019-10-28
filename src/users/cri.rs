@@ -26,7 +26,7 @@ fn load_promo(client: &CRIClient, promo: &str, users: &mut UserManager) -> EpiRe
                 let mut region = get_region(&remote);
 
                 if region.is_none() {
-                    warn!("Can't find region for user '{}', using Paris", remote.login);
+                    warn!("Can't find region for user '{} {}', using Paris", remote.firstname, remote.lastname);
                     region = Some("Paris".into());
                 }
 
@@ -77,7 +77,6 @@ fn capitalize(s: &str) -> String {
 
 #[derive(Deserialize)]
 struct UsersListResponse {
-    count: usize,
     results: Vec<UserResponse>
 }
 
@@ -91,8 +90,7 @@ struct UserResponse {
     firstname: String,
     promo: String,
     class_groups: Vec<String>,
-    photo: String,
-    url: String
+    photo: String
 }
 
 struct CRIClient {
