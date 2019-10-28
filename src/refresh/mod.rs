@@ -59,8 +59,8 @@ fn get_last_qcm(user: &LoggedUser) -> EpiResult<Option<QCMResult>> {
     // TODO: Move somewhere else
     let identity = user.session.identity().unwrap();
 
-    // ReceivedDateTime checking is needed, else the $filter is considered too complexe (because of the orderBy)
-    let mut mails = microsoft::get_mails(identity, "startsWith(subject, '[EPITA] Résultat du QCM') and receivedDateTime gt 2019-09-01 and hasAttachments eq true")?;
+    // ReceivedDateTime checking is needed (in first) else the $filter is considered too complexe (because of the orderBy)
+    let mut mails = microsoft::get_mails(identity, "receivedDateTime gt 2019-09-01 and startsWith(subject, '[EPITA] Résultat du QCM') and hasAttachments eq true")?;
     mails.sort_by(|a, b| a.receivedDateTime.cmp(&b.receivedDateTime).reverse());
 
     if mails.len() == 0 {
