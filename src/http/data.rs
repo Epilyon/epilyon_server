@@ -35,6 +35,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
         web::scope("/")
             .app_data(db)
             .service(data_get)
+            .service(refresh)
     );
 }
 
