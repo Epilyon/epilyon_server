@@ -1,18 +1,33 @@
-use lopdf::{Document, Object};
-use lopdf::content::Content;
+/*
+ * Epilyon, keeping EPITA students organized
+ * Copyright (C) 2019-2020 Adrien 'Litarvan' Navratil
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 use std::collections::btree_map::BTreeMap;
 use std::cmp::Ordering;
 
+use lopdf::{Document, Object};
+use lopdf::content::Content;
+use failure::Fail;
+
 // This is not perfect, but it works. I had to go through a part of the PDF spec for this...
-pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, lopdf::Error> {
+pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, PDFError> {
     let doc = Document::load_mem(data)?;
+    let page_id = doc.page_iter().nth(0)
+        .ok_or(lopdf::Error::PageNumberNotFound(0))?;
 
-    let page_opt = doc.page_iter().nth(0);
-    if page_opt.is_none() {
-        return Err(lopdf::Error::PageNumberNotFound(0))
-    }
-
-    let page_id = page_opt.unwrap();
     let encodings = doc
         .get_page_fonts(page_id)
         .into_iter()
@@ -45,15 +60,15 @@ pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, lopdf::Error> {
             "Td" => {
                 // Starts a new line at x, y
 
-                x = x + (operands.get(0).unwrap().as_f64().unwrap() * sx);
-                y = y + (operands.get(1).unwrap().as_f64().unwrap() * sy);
+                x = x + (operands.get(0).ok_or(PDFError::MalformedQCM)?.as_f64()? * sx);
+                y = y + (operands.get(1).ok_or(PDFError::MalformedQCM)?.as_f64()? * sy);
 
                 line = false; // We are starting a new line, so setting line to false
             },
             "Tf" => {
                 // Sets the current font
 
-                let current_font = operands[0].as_name().unwrap();
+                let current_font = operands[0].as_name()?;
                 current_encoding = encodings.get(current_font).map(std::string::String::as_str);
             }
             "Tj" => {
@@ -80,22 +95,22 @@ pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, lopdf::Error> {
             "Tm" => {
                 // Defines a new text matrix (x, y, scalex, scaley), and also starts a new line
 
-                let n = operands.get(0).unwrap();
+                let n = operands.get(0).ok_or(PDFError::MalformedQCM)?;
                 if n.as_f64().is_err() {
-                    sx = n.as_i64().unwrap() as f64;
+                    sx = n.as_i64()? as f64;
                 } else {
-                    sx = n.as_f64().unwrap();
+                    sx = n.as_f64()?;
                 }
                 
-                let n = operands.get(3).unwrap();
+                let n = operands.get(3).ok_or(PDFError::MalformedQCM)?;
                 if n.as_f64().is_err() {
-                    sy = n.as_i64().unwrap() as f64;
+                    sy = n.as_i64()? as f64;
                 } else {
-                    sy = n.as_f64().unwrap();
+                    sy = n.as_f64()?;
                 }
 
-                x = operands.get(4).unwrap().as_f64().unwrap();
-                y = operands.get(5).unwrap().as_f64().unwrap();
+                x = operands.get(4).ok_or(PDFError::MalformedQCM)?.as_f64()?;
+                y = operands.get(5).ok_or(PDFError::MalformedQCM)?.as_f64()?;
 
                 line = false; // We are starting a new line, so setting line to false
             }
@@ -121,7 +136,12 @@ pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, lopdf::Error> {
         }
     });
 
-    Ok(result.iter().map(|e| e.text.parse::<f32>().unwrap()).collect())
+    let mut grades: Vec<f32> = Vec::new();
+    for e in result {
+        grades.push(e.text.parse::<f32>().map_err(|_| PDFError::MalformedQCM)?);
+    }
+
+    Ok(grades)
 }
 
 #[derive(Debug)]
@@ -130,3 +150,16 @@ struct Entry {
     y: f64,
     text: String
 }
+
+#[derive(Fail, Debug)]
+pub enum PDFError {
+    #[fail(display = "PDF Parsing error : {}", error)]
+    ParsingError {
+        error: lopdf::Error
+    },
+
+    #[fail(display = "Malformed PDF : This is very bad, please contact the devs")]
+    MalformedQCM
+}
+
+from_error!(lopdf::Error, PDFError, PDFError::ParsingError);

@@ -1,276 +1,381 @@
-use std::ops::Deref;
+/*
+ * Epilyon, keeping EPITA students organized
+ * Copyright (C) 2019-2020 Adrien 'Litarvan' Navratil
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+use std::collections::HashMap;
+use std::sync::Mutex;
 
-use rocket::Request;
-use rocket::http::{ContentType, Status};
-use rocket::request::{FromRequest, Outcome, Form};
-use rocket::response::{Content, Redirect};
-use rocket_contrib::json::JsonValue;
+use log::{info, error};
+use failure::Fail;
+use lazy_static::lazy_static;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
-use jwt::{Header as JwtHeader, Validation};
-use chrono::Utc;
 use time::Duration;
-use serde::{Deserialize, Serialize};
+use serde_json::json;
+use serde::Deserialize;
+use futures::future::{ok, err, Ready};
+use actix_web::{
+    get, post,
+    web,
+    HttpRequest, HttpResponse,
+    FromRequest, Responder,
+    dev::Payload, dev::HttpResponseBuilder,
+    http::StatusCode,
+    ResponseError
+};
 
-use crate::users::auth::{AuthSession, AuthState};
-use crate::users::{microsoft, UserManager, LoggedUser, StateManager};
-use crate::database::DatabaseAccess;
-use crate::error::{EpiResult, EpiError};
-use crate::sync::{AsyncState, EpiLock};
-use crate::refresh::refresh as do_refresh;
+use crate::sync::EpiLock;
+use crate::user::{microsoft, UserSession, User, cri::CRIUser};
+use crate::db::{DatabaseConnection, DatabaseError};
 
-#[post("/auth/start")]
-pub fn start(db: AsyncState<DatabaseAccess>) -> EpiResult<JsonValue> {
-    let state = gen_uuid();
-    let session = AuthSession::new(gen_uuid());
+const AUTH_SESSION_DURATION: i64 = 10 * 60 * 1000; // Ten minutes
+const USER_SESSION_DURATION: i64 = 2 * 7 * 24 * 60 * 60 * 1000; // Two weeks
 
-    if let Err(e) = db.epilock().add_auth_session(state.clone(), session) {
-        error!("Database error while adding session '{}' to database : {}", &state, e);
-        return Err(EpiError::DatabaseError);
-    }
+lazy_static! {
+    static ref BASE_STATE: web::Data<AuthState> = web::Data::new(AuthState {
+        sessions: Mutex::new(HashMap::new()),
+    });
+}
 
-    // TODO: Rate limiting
+// TODO: Device token
 
-    Ok(json!({
-        "token": gen_token(state)?
+pub struct AuthState {
+    sessions: Mutex<HashMap<String, AuthSession>>
+}
+
+#[derive(Clone)]
+pub struct AuthSession {
+    state: String,
+    nonce: String,
+    expires_at: DateTime<Utc>,
+    result: Option<(u32, CRIUser)>
+}
+
+pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>) {
+    cfg.service(
+        web::scope("/")
+            .app_data(BASE_STATE.clone())
+            .app_data(db)
+            .service(start)
+            .service(login)
+            .service(redirect)
+            .service(end)
+            .service(refresh)
+            .service(logout)
+    );
+}
+
+#[post("/start")]
+pub async fn start(state: web::Data<AuthState>) -> impl Responder {
+    // TODO: Rate limit this
+    let token = gen_uuid();
+
+    state.sessions.epilock().insert(token.clone(), AuthSession {
+        state: token.clone(),
+        nonce: gen_uuid(),
+        expires_at: Utc::now() + Duration::milliseconds(AUTH_SESSION_DURATION),
+        result: None
+    });
+
+    HttpResponse::Ok().json(json!({
+        "success": true,
+        "token": token
     }))
 }
 
-#[get("/auth/login")]
-pub fn login(session: AuthSession, claims: TokenClaims) -> EpiResult<Redirect> {
-    // Cookie is unwrapped, because if it wasn't present the AuthSession FromRequest impl would have dropped an error
-    let uri = microsoft::get_redirect_uri( &claims.sub, session.nonce())?;
-    Ok(Redirect::found(uri))
+#[get("/login")]
+pub async fn login(session: AuthSession) -> impl Responder {
+    HttpResponse::Found()
+        .set_header("Location", microsoft::get_redirect_uri(&session.state, &session.nonce))
+        .finish()
 }
 
-#[post("/auth/redirect", data = "<result>")]
-pub fn redirect(db: AsyncState<DatabaseAccess>, users: AsyncState<UserManager>, result: Form<LoginResult>) -> EpiResult<Content<&'static str>> {
-    let db = db.epilock();
-    let users = users.epilock();
+#[post("/redirect")]
+pub async fn redirect(
+    state: web::Data<AuthState>,
+    db: web::Data<DatabaseConnection>,
+    result: web::Form<LoginResult>
+)-> Result<HttpResponse, AuthError> {
+    let mut sessions = state.sessions.epilock(); // So the lock lives for the whole function
+    let session = sessions.get_session(&result.state)
+        .ok_or(AuthError::InvalidState)?;
 
-    let db_result = db.get_auth_session(&result.state);
+    let (email, ms_user) = microsoft::identify(&result.code, &session.nonce).await?;
 
-    if let Err(e) = db_result {
-        error!("Database error while getting session '{}' to database : {}", &result.state, e);
-        return Err(EpiError::DatabaseError);
+    let mut matches: Vec<User> = db.single_query(
+        r"
+            FOR user IN users
+                FILTER user.cri_user.email == @email
+                    RETURN user
+        ", json!({
+            "email": email
+        })
+    ).await?;
+
+    if matches.len() == 0 {
+        return Err(AuthError::UnknownUser {
+            email: email.clone()
+        });
     }
 
-    let session_opt = db_result.unwrap();
+    let mut user = matches.swap_remove(0);
+    user.session = Some(UserSession {
+        token: result.state.clone(),
+        ms_user,
+        expires_at: Utc::now() + Duration::milliseconds(USER_SESSION_DURATION)
+    });
 
-    if session_opt.is_none() {
-        warn!("/auth/redirect called with unknown state '{}'", &result.state);
-        return Err(EpiError::UnknownSession);
-    }
+    db.replace("users", &user._key, user.clone()).await?;
+    session.result = Some((user.id.clone(), user.cri_user.clone()));
 
-    let mut session = session_opt.unwrap();
+    info!(
+        "Successfully logged user {} {} ({})",
+        user.cri_user.first_name,
+        user.cri_user.last_name,
+        user.cri_user.email
+    );
 
-    match session.state() {
-        AuthState::Started => {},
-        AuthState::Failed(_) => {
-            warn!("/auth/redirect called from a failed session '{}'", &result.state);
-            return Err(EpiError::InvalidState);
+    Ok(HttpResponse::Ok()
+        .content_type("text/html")
+        .body("<script>if (Epilyon) { Epilyon.postMessage('Close') }</script>"))
+}
+
+#[post("/end")]
+pub async fn end(state: web::Data<AuthState>, db: web::Data<DatabaseConnection>, session: AuthSession) -> Result<HttpResponse, AuthError> {
+    match &session.result {
+        Some((id, user)) => {
+            let mut sessions = state.sessions.epilock();
+            sessions.remove(&session.state);
+
+            let first = db.single_query::<Vec<bool>>(
+                r"
+                    FOR history IN qcm_histories
+                        FILTER history.user == @user
+                        return true
+                ",
+                json!({
+                    "user": id
+                })
+            ).await?;
+
+            Ok(HttpResponse::Ok().json(json!({
+                "success": true,
+                "user": user,
+                "first_time": first.len() == 0
+            })))
         },
-        AuthState::Ended | AuthState::Logged => {
-            warn!("/auth/redirect called by a logged user '{}'", &users.get_from_session(&session).unwrap().email);
-            return Err(EpiError::InvalidState);
-        }
-    }
-
-    microsoft::identify(&mut session, users.deref(), &result.code)?;
-
-    let user = users.get_from_session(&session).unwrap();
-
-    match db.update_auth_session(result.state.clone(), session.clone()) {
-        Ok(_) => {
-            info!("Successfully logged user '{} {}' ({})", &user.first_name, &user.last_name, &user.email);
-        },
-        Err(e) => {
-            error!("Database error while updating auth session to log user '{}' : {}", &user.email, e);
-            session.fail(EpiError::DatabaseError);
-        }
-    }
-
-    Ok(Content(ContentType::HTML, "<script>if (Epilyon) { Epilyon.postMessage('Close') }</script>")) // TODO: Move somewhere
-}
-
-#[post("/auth/end")]
-pub fn end(users: AsyncState<UserManager>, states: AsyncState<StateManager>, mut session: AuthSession) -> EpiResult<JsonValue> {
-    match session.state() {
-        &AuthState::Ended | &AuthState::Logged => match users.epilock().get_from_session(&session) {
-            Some(user) => {
-                let logged = LoggedUser {
-                    user: user.clone(),
-                    session: session.clone()
-                };
-
-                do_refresh(states.inner(), &logged)?;
-                session.log()?;
-
-                Ok(json!({
-                    "id": &user.uid,
-                    "name": format!("{} {}", &user.first_name, &user.last_name),
-                    "email": &user.email,
-                    "promo": &user.promo,
-                    "region": &user.region
-                }))
-            },
-            None => {
-                error!("User session '{}' has no user associated with", session.user().unwrap());
-                Err(EpiError::Unauthorized)
-            },
-        },
-        _ => Err(EpiError::Unauthorized)
+        None => Err(AuthError::AuthCancelled)
     }
 }
 
-#[post("/auth/refresh")]
-pub fn refresh(db: AsyncState<DatabaseAccess>, claims: TokenClaims, _user: LoggedUser) -> EpiResult<JsonValue> {
-    // TODO: Remove _user: LoggedUser, manage this correctly client-side instead
-    // LoggedUser is passed so the whole token check process is went through
-    // TODO: Refresh MS connection
-
-    match db.epilock().expire_valider(claims.valider.clone()) {
-        Ok(()) => Ok(json!({
-            "token": gen_token(claims.sub.clone())?
-        })),
-        Err(e) => {
-            error!("Database error while expiring valider '{}' : {}", &claims.valider, e);
-            Err(EpiError::DatabaseError)
-        }
+#[post("/refresh")]
+pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, AuthError> {
+    let new_token = gen_uuid();
+    if let Some(ref mut s) = user.session { // Always true
+        s.token = new_token.clone();
+        s.expires_at = Utc::now() + Duration::milliseconds(USER_SESSION_DURATION);
     }
+
+    db.replace("users", &user._key, user.clone()).await?;
+
+    Ok(HttpResponse::Ok().json(json!({
+        "success": true,
+        "token": new_token,
+        "user": user.cri_user.clone()
+    })))
 }
 
-#[post("/auth/logout")]
-pub fn logout(db: AsyncState<DatabaseAccess>, claims: TokenClaims) -> EpiResult<JsonValue> {
-    let db = db.epilock();
+#[post("/logout")]
+pub async fn logout(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, AuthError> {
+    user.session = None;
+    db.replace("users", &user._key, user.clone()).await?;
 
-    db.remove_auth_session(&claims.sub).map_err(|e| {
-        error!("Database error while removing auth session '{}' : {}", &claims.sub, e);
-        EpiError::DatabaseError
-    })?;
-
-    match db.expire_valider(claims.valider.clone()) {
-        Ok(()) => Ok(json!({
-            "success": true
-        })),
-        Err(e) => {
-            error!("Database error while setting valider '{}' expired : {}", &claims.valider, e);
-            Err(EpiError::DatabaseError)
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenClaims {
-    sub: String,
-    iss: String,
-    exp: i64,
-    valider: String
-}
-
-#[derive(FromForm)]
-pub struct LoginResult {
-    code: String,
-    state: String,
-    #[allow(dead_code)]
-    session_state: String // Needed for Rocket to parse the response
-}
-
-fn get_auth_secret() -> EpiResult<String> {
-    std::env::var("AUTH_SECRET").map_err(|_| EpiError::MissingVar)
+    Ok(HttpResponse::Ok().json(json!({
+        "success": true
+    })))
 }
 
 fn gen_uuid() -> String {
     Uuid::new_v4().to_hyphenated().to_string()
 }
 
-fn gen_token(state: String) -> EpiResult<String> {
-    let secret = get_auth_secret()?;
+fn get_token(req: &HttpRequest) -> Result<String, AuthError> {
+    Ok(String::from(req.headers().get("Token")
+        .ok_or(AuthError::MissingToken)?
+        .to_str().map_err(|_| AuthError::InvalidToken)?))
+}
 
-    let claims = TokenClaims {
-        sub: state,
-        iss: "Epilyon".into(),
-        exp: (Utc::now() + Duration::days(14)).timestamp(),
-        valider: gen_uuid() // A token that can be invalidated during refresh
-    };
+trait SessionContainer {
+    fn get_session(&mut self, token: &str) -> Option<&mut AuthSession>;
+}
 
-    match jwt::encode(&JwtHeader::default(), &claims, secret.as_ref()) {
-        Ok(token) => Ok(token),
-        Err(e) => {
-            error!("Error while generating JWT for session '{}' : {}", &claims.sub, e);
-            Err(EpiError::TokenError)
+impl SessionContainer for HashMap<String, AuthSession> {
+    fn get_session(&mut self, token: &str) -> Option<&mut AuthSession> {
+        let now = Utc::now();
+        self.retain(|_, s| s.expires_at > now);
+
+        self.get_mut(token)
+    }
+}
+
+#[derive(Deserialize)]
+pub struct LoginResult {
+    code: String,
+    state: String,
+    #[allow(dead_code)]
+    session_state: String // Needed for Actix to parse the response
+}
+
+impl FromRequest for AuthSession {
+    type Error = AuthError;
+    type Future = Ready<Result<Self, Self::Error>>;
+    type Config = ();
+
+    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
+        // We need to use ok/err from 'futures' as traits still can't have async functions, so
+        // to make this simpler I did a Result wrapper to be able to use '?'
+        fn get_session(req: &HttpRequest) -> Result<Option<AuthSession>, AuthError> {
+            let data = req.app_data::<web::Data<AuthState>>()
+                .ok_or(AuthError::ServiceError)?;
+            let mut sessions = data.sessions.epilock();
+            let token = get_token(req)?;
+
+            Ok(sessions.get_session(&token).map(|s| s.clone()))
+        }
+
+        match get_session(req) {
+            Ok(sess) => match sess {
+                Some(s) => ok(s.clone()),
+                None => err(AuthError::InvalidToken)
+            },
+            Err(e) => err(e)
         }
     }
 }
 
-impl<'a, 'r> FromRequest<'a, 'r> for TokenClaims {
-    type Error = EpiError;
+impl FromRequest for User {
+    type Error = AuthError;
+    // Again, traits cannot have async function, but we need to use db.single_query which return
+    // a dynamic Future. But, the Future type we response must be sized, that's why we must use
+    // a Box. As it needs to be 'Unpin', we use Box::pin, which makes this type :
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
+    type Config = ();
 
-    fn from_request(request: &'a Request<'r>) -> Outcome<TokenClaims, EpiError> {
-        let db = request.guard::<AsyncState<DatabaseAccess>>().unwrap(); // Can't fail
-        let auth = request.headers().get_one("Authorization");
+    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
+        async fn get_user(req: HttpRequest) -> Result<User, AuthError> {
+            let token = get_token(&req)?;
+            let db = req.app_data::<web::Data<DatabaseConnection>>()
+                .ok_or(AuthError::ServiceError)?;
 
-        if let Some(content) = auth {
-            let split: Vec<_> = content.split_ascii_whitespace().collect();
+            let mut matches: Vec<User> = db.single_query(
+                r"
+                    FOR user IN users
+                        FILTER user.session.token == @token
+                            RETURN user
+                ",
+                json!({
+                    "token": &token
+                })
+            ).await?;
 
-            if let Some(token) = split.get(1) {
-                if let Ok(secret) = get_auth_secret() {
-                    if let Ok(result) = jwt::decode::<TokenClaims>(token, secret.as_ref(), &Validation::default()) {
+            if matches.len() == 0 {
+                Err(AuthError::InvalidToken)
+            } else {
+                let user = matches.swap_remove(0);
 
-                        match db.epilock().is_valider_expired(&result.claims.valider) {
-                            Ok(expired) => if !expired {
-                                return Outcome::Success(result.claims.clone()); // TODO: Is there a better way ?
-                            },
-                            Err(e) => {
-                                error!("Database errr while checking valider '{}' : {}", &result.claims.valider, e);
-                                return Outcome::Failure((Status::InternalServerError, EpiError::DatabaseError));
-                            }
-                        }
-                    }
+                if match &user.session {
+                    Some(s) => Utc::now() > s.expires_at,
+                    None => true
+                } {
+                    Err(AuthError::InvalidToken)
+                } else {
+                    Ok(user)
                 }
             }
         }
 
-        Outcome::Failure((Status::Forbidden, EpiError::Unauthorized))
+        Box::pin(get_user(req.clone()))
     }
 }
 
-impl<'a, 'r> FromRequest<'a, 'r> for AuthSession {
-    type Error = EpiError;
+#[derive(Debug, Fail)]
+pub enum AuthError {
+    #[fail(display = "Invalid or expired token")]
+    InvalidToken,
 
-    fn from_request(request: &'a Request<'r>) -> Outcome<AuthSession, EpiError> {
-        let db = request.guard::<AsyncState<DatabaseAccess>>().unwrap(); // Can't fail
-        let token = TokenClaims::from_request(request);
+    #[fail(display = "Missing 'Token' header")]
+    MissingToken,
 
-        if let Outcome::Success(claims) = token {
-            match db.epilock().get_auth_session(&claims.sub) {
-                Ok(opt) => if let Some(sess) = opt {
-                    return Outcome::Success(sess)
-                },
-                Err(e) => {
-                    error!("Database error while loading auth session '{}' : {}", &claims.sub, e);
-                    return Outcome::Failure((Status::InternalServerError, EpiError::DatabaseError))
-                }
+    #[fail(display = "App service misconfiguration, this is very bad : please contact the devs")]
+    ServiceError,
+
+    #[fail(display = "Unknown state token")]
+    InvalidState,
+
+    #[fail(display = "Microsoft API error : {}", error)]
+    MicrosoftError {
+        error: microsoft::MSError
+    },
+
+    #[fail(display = "User with email '{}' can't be found in the CRI, \
+    are you really from Epita Lyon ?", email)]
+    UnknownUser {
+        email: String
+    },
+
+    #[fail(display = "Database connection error. This is very bad : please contact the devs")]
+    DatabaseError {
+        error: DatabaseError
+    },
+
+    #[fail(display = "JSON pasring error : {}. This is bad : please contact the devs", error)]
+    ParsingError {
+        error: serde_json::Error
+    },
+
+    #[fail(display = "Auth process was cancelled or not finished")]
+    AuthCancelled
+}
+
+impl ResponseError for AuthError {
+    fn status_code(&self) -> StatusCode {
+        use AuthError::*;
+
+        match self {
+            MissingToken =>
+                StatusCode::BAD_REQUEST,
+            InvalidToken | InvalidState | AuthCancelled | UnknownUser { .. } =>
+                StatusCode::FORBIDDEN,
+            ServiceError | ParsingError { .. } | MicrosoftError { .. } =>
+                StatusCode::INTERNAL_SERVER_ERROR,
+            DatabaseError { error } => {
+                error!("Database error during auth request : {}", error);
+                StatusCode::INTERNAL_SERVER_ERROR
             }
         }
+    }
 
-        Outcome::Failure((Status::Forbidden, EpiError::Unauthorized))
+    fn error_response(&self) -> HttpResponse {
+        HttpResponseBuilder::new(self.status_code()).json(json!({
+            "success": false,
+            "error": format!("{}", self)
+        }))
     }
 }
 
-impl<'a, 'r> FromRequest<'a, 'r> for LoggedUser {
-    type Error = EpiError;
-
-    fn from_request(request: &'a Request<'r>) -> Outcome<LoggedUser, EpiError> {
-        let session = AuthSession::from_request(request)?;
-        let users_lock = request.guard::<AsyncState<UserManager>>().unwrap(); // Can't fail
-        let users = users_lock.epilock(); // Needed so both users_lock and users live for the whole function
-
-        match users.get_from_session(&session) {
-            Some(u) => Outcome::Success(LoggedUser {
-                user: u.clone(),
-                session
-            }),
-            None => Outcome::Failure((Status::Forbidden, EpiError::Unauthorized))
-        }
-    }
-}
+from_error!(microsoft::MSError, AuthError, AuthError::MicrosoftError);
+from_error!(serde_json::Error, AuthError, AuthError::ParsingError);
+from_error!(DatabaseError, AuthError, AuthError::DatabaseError);

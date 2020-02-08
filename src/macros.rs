@@ -15,22 +15,14 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-use std::sync::{MutexGuard, Mutex};
-
-use log::error;
-
-pub trait EpiLock<T> {
-    fn epilock(&self) -> MutexGuard<T>;
-}
-
-impl<T> EpiLock<T> for Mutex<T> {
-    fn epilock(&self) -> MutexGuard<T> {
-        match self.lock() {
-            Ok(t) => t,
-            Err(e) => {
-                error!("A mutex was poisoned, this is bad");
-                e.into_inner() // It's as simple as this, thanks to Rust!
+macro_rules! from_error {
+    ($from: ty, $to: ty, $val: path) => {
+        impl From<$from> for $to {
+            fn from(e: $from) -> Self {
+                $val {
+                    error: e
+                }
             }
         }
-    }
+    };
 }

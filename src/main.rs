@@ -1,105 +1,101 @@
-#![feature(proc_macro_hygiene, decl_macro)]
+/*
+ * Epilyon, keeping EPITA students organized
+ * Copyright (C) 2019-2020 Adrien 'Litarvan' Navratil
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+use log::{info, warn, error};
+use serde_json::{json, Value as JsonValue};
+use actix::Actor;
 
-#[macro_use] extern crate rocket;
-#[macro_use] extern crate rocket_contrib;
-#[macro_use] extern crate log;
-extern crate pretty_env_logger;
-extern crate serde;
-extern crate serde_derive;
-extern crate serde_json;
-extern crate chrono;
-extern crate time;
-extern crate uuid;
-extern crate dotenv;
-extern crate reqwest;
-extern crate jsonwebtoken as jwt;
-extern crate base64;
+const VERSION: &str = "0.1.0";
 
+#[macro_use]
+mod macros;
+
+mod data;
 mod http;
-mod database;
-mod users;
-mod refresh;
+mod user;
+mod config;
+mod db;
 mod sync;
-mod error;
 
-use crate::users::{StateManager, LoggedUser, UserManager};
-use crate::database::DatabaseAccess;
-use crate::sync::{Asyncable, EpiLock};
-use crate::error::EpiError;
+use config::CONFIG;
+use db::DatabaseConnection;
+use user::UserError;
+use data::RefreshActor;
 
-// TODO: Log thing more (using debug!)
-
-const VERSION: &'static str = "0.1.0";
-
-fn main() {
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", format!("warn,epilyon_server={},launch=info", if std::env::var("EPILYON_DEBUG").is_ok() { "debug" } else { "info" }));
+#[actix_rt::main]
+async fn main() {
+    if std::env::var("EPILYON_LOG").is_err() {
+        std::env::set_var("EPILYON_LOG", "warn,epilyon_server=info");
     }
 
-    pretty_env_logger::init();
+    if let Err(e) = pretty_env_logger::try_init_custom_env("EPILYON_LOG") {
+        eprintln!("Couldn't initialize logger : {}", e);
+        return;
+    }
 
     info!("Starting Epilyon server v{}", VERSION);
     info!("by Adrien 'Litarvan' Navratil");
     info!("---------------------------------------------------");
 
-    if let Err(e) = dotenv::dotenv() {
-        error!("Couldn't load the .env file (did you copy the .env.example file ?) : {}", e);
-        return;
-    }
+    match startup().await {
+        Ok(db) => {
+            RefreshActor {
+                db: db.clone()
+            }.start();
 
-    let mut users = UserManager::new();
-
-    info!("Loading users from CRI...");
-    if let Err(e) = users::load_users(&mut users) {
-        error!("Error while loading users from CRI : {}", e);
-        error!("Can't start");
-
-        return;
-    }
-
-    info!("Successfully loaded {} users from CRI", users.count());
-
-    // This is meant to be used in the get_users function or passed to schedule_refresh
-    // Because they will all be moved to a new scope, we need to do a copy for those passed to Rocket HTTP
-    let users = UserManager::new_async(users);
-    let db = DatabaseAccess::new_async(DatabaseAccess::new());
-    let states = StateManager::new_async(StateManager::new());
-
-    // Those ones will be passed to the HTTP State
-    // Cloning an Arc does not clone its content, but makes a new Arc pointing at the same reference
-    // arc.clone() is the same as Arc::new(&arc)
-    let http_users = users.clone();
-    let http_db = db.clone();
-    let http_states = states.clone();
-
-    refresh::schedule_refresh(states, move || {
-        match db.epilock().get_auth_sessions() {
-            Ok(sessions) => {
-                let mut result = Vec::new();
-
-                for session in sessions {
-                    let users = users.epilock(); // Can't be inline, we must declare it here so it lives for the whole scope
-                    let user = users.get_from_session(&session);
-
-                    if let Some(u) = user { // If user is None, it means the session is created but not logged
-                        result.push(LoggedUser {
-                            user: u.clone(),
-                            session
-                        });
-                    }
-                }
-
-                Ok(result)
-            },
-            Err(e) => {
-                error!("Database error while getting sessions for refresh process : {}", e);
-                Err(EpiError::DatabaseError)
+            if let Err(e) = http::start(&CONFIG.address, CONFIG.port, db).await {
+                error!("Error while running the HTTP server : {}", e);
             }
+        },
+        Err(e) => error!("Error during startup phase : {}", e)
+    }
+}
+
+async fn startup() -> Result<DatabaseConnection, failure::Error> {
+    let conn = db::open(
+        &CONFIG.db_host,
+        CONFIG.db_port,
+        &CONFIG.db_user,
+        &CONFIG.db_password,
+        &CONFIG.db_database
+    ).await?;
+
+    let res = user::update_users(&conn).await;
+    if let Err(e) = res {
+        match e {
+            UserError::CRIError { error } => {
+                let count: JsonValue = conn.single_query(
+                    "RETURN COUNT(users)",
+                    json!({})
+                ).await?;
+
+                if let Some(0i64) = count[0].as_i64() {
+                    Err(error.into())
+                } else {
+                    warn!("CRI error during user update : {}", error);
+                    warn!("CRI is down, but there are users in the database, continuing anyway");
+
+                    Ok(conn)
+                }
+            },
+            // Prevents ownership errors
+            err @ UserError::DatabaseError { .. } => Err(err.into())
         }
-    });
-
-    info!("Started refresh service");
-    info!("Starting HTTP server");
-
-    http::start(http_db, http_users, http_states);
+    } else {
+        Ok(conn)
+    }
 }

@@ -1,97 +1,81 @@
-use rocket::request::Request;
-use rocket::response::{Response, Responder};
-use rocket::http::{Status, Header};
-use rocket::fairing::{Fairing, Info, Kind};
+/*
+ * Epilyon, keeping EPITA students organized
+ * Copyright (C) 2019-2020 Adrien 'Litarvan' Navratil
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+use std::io::Error as IOError;
 
-use crate::database::DatabaseAccess;
-use crate::users::{UserManager, StateManager};
-use crate::sync::AsyncObj;
-use crate::error::EpiError;
+use failure::Fail;
+use log::info;
+use actix_web::{
+    web, http,
+    App, HttpServer,
+    middleware::Logger
+};
+
+use crate::db::DatabaseConnection;
 
 mod auth;
-mod state;
+mod data;
+pub mod jwt;
 
-pub fn start(db: AsyncObj<DatabaseAccess>, users: AsyncObj<UserManager>, states: AsyncObj<StateManager>) {
-    rocket::ignite()
-        .mount("/", routes![
-            auth::start,
-            auth::login,
-            auth::redirect,
-            auth::end,
-            auth::refresh,
-            auth::logout,
+pub async fn start(address: &str, port: u16, db: DatabaseConnection) -> Result<(), HttpError> {
+    let db_data = web::Data::new(db);
 
-            state::get
-        ])
-        .register(catchers![
-            not_found,
-            forbidden,
-            form_error,
-            unknown_error
-        ])
-        .manage(db)
-        .manage(users)
-        .manage(states)
-        .attach(UTF8Responder {})
-        .launch();
+    let address = format!("{}:{}", address, port);
+    let server = HttpServer::new(move || {
+        App::new()
+            .wrap(Logger::default())
+            .service(web::scope("/auth").configure(|c| {
+                auth::configure(c, db_data.clone())
+            }))
+            .service(web::scope("/data").configure(|c| {
+                data::configure(c, db_data.clone())
+            }))
+    })
+        .bind(&address).map_err(|e| HttpError::BindError { address: address.clone(), error: e })?
+        .run();
+
+    info!("Listening on http://{}...", address);
+
+    server.await.map_err(|e| HttpError::ServerError { error: e })
 }
 
-impl<'r> Responder<'r> for EpiError {
-    fn respond_to(self, req: &Request) -> Result<Response<'r>, Status> {
-        json!({
-            "error": "General error",
-            "message": format!("{}", self)
-        }).respond_to(req)
+#[derive(Debug, Fail)]
+pub enum HttpError {
+    #[fail(display = "Couldn't bind to address '{}' : {}", address, error)]
+    BindError {
+        address: String,
+        error: IOError
+    },
+
+    #[fail(display = "HTTP server I/O error : {}", error)]
+    ServerError {
+        error: IOError
     }
 }
 
-struct UTF8Responder;
+// Please forgive me for this
+struct EncodableString(String);
 
-impl Fairing for UTF8Responder {
-    fn info(&self) -> Info {
-        Info {
-            name: "UTF-8 Responder",
-            kind: Kind::Response
-        }
+pub fn percent_encode(s: String) -> String {
+    format!("{}", EncodableString(s))
+}
+
+impl std::fmt::Display for EncodableString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        http::header::http_percent_encode(f, self.0.as_bytes())
     }
-
-    fn on_response(&self, _request: &Request, response: &mut Response) {
-        let header = response.headers().get_one("Content-Type");
-
-        if header.is_some() && header.unwrap() == "application/json" {
-            response.set_header(Header::new("Content-Type", "application/json; charset=utf-8"));
-        }
-    }
-}
-
-#[catch(404)]
-fn not_found<'r>(req: &Request) -> Result<Response<'r>, Status> {
-    json!({
-        "error": "Not found",
-        "message": format!("Can't find route '{} {}'", req.method(), req.uri().path())
-    }).respond_to(req)
-}
-
-#[catch(403)]
-fn forbidden<'r>(req: &Request) -> Result<Response<'r>, Status> {
-    json!({
-        "error": "Unauthorized",
-        "message": format!("You aren't allowed to do this")
-    }).respond_to(req)
-}
-
-#[catch(422)]
-fn form_error<'r>(req: &Request) -> Result<Response<'r>, Status> {
-    json!({
-        "error": "Malformed request",
-        "message": "Malformed form data (missing fields / wrong order)"
-    }).respond_to(req)
-}
-
-#[catch(500)]
-fn unknown_error<'r>(req: &Request) -> Result<Response<'r>, Status> {
-    json!({
-        "error": "Unknown error",
-        "message": "Unknown error, this is bad please report this"
-    }).respond_to(req)
 }
