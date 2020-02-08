@@ -110,13 +110,15 @@ pub async fn refresh(user: &MSUser) -> Result<MSUser, MSError> {
     })
 }
 
-pub async fn get_mails(user: &MSUser, filter: &str) -> Result<Vec<Mail>, MSError> {
+pub async fn get_mails(user: &MSUser, filter: &str, count: usize) -> Result<Vec<Mail>, MSError> {
     let url = format!(
         "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?\
             $select=id,receivedDateTime,hasAttachments,subject,sender&\
             $orderby=receivedDateTime desc&\
-            $filter={}",
-        filter
+            $filter={}&\
+            $top={}",
+        filter,
+        count
     );
 
     ms_request::<Vec<Mail>>(user, &url).await
