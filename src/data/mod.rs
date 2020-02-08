@@ -169,7 +169,7 @@ async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<(), DataErro
 
     history.qcms.sort_by(|a, b| a.date.cmp(&b.date).reverse());
 
-    let mut starting_at = String::from("2019-09-01");
+    let mut starting_at = String::from("2019-10-01"); // Before that is the seminar
     if let Some(qcm) = history.qcms.get(0) {
         let starting_date = qcm.date;
         starting_at = format!("{}-{:02}-{:02}", starting_date.year(), starting_date.month(), starting_date.day());
@@ -179,7 +179,7 @@ async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<(), DataErro
         &session.ms_user,
         &format!("receivedDateTime gt {} and \
         startsWith(subject, '[EPITA] Résultat du QCM') and hasAttachments eq true", starting_at),
-        if history.qcms.len() == 0 { 50 } else { 10 }
+        if history.qcms.len() == 0 { 50 } else { 6 }
     ).await?;
 
     let mut qcms: HashMap<&str, QCMResult> = HashMap::new();
