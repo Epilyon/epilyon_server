@@ -60,8 +60,11 @@ pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, PDFError> {
             "Td" => {
                 // Starts a new line at x, y
 
-                x = x + (operands.get(0).ok_or(PDFError::MalformedQCM)?.as_f64()? * sx);
-                y = y + (operands.get(1).ok_or(PDFError::MalformedQCM)?.as_f64()? * sy);
+                let xobj = operands.get(0).ok_or(PDFError::MalformedQCM)?;
+                let yobj = operands.get(1).ok_or(PDFError::MalformedQCM)?;
+
+                x = x + (xobj.as_f64().or_else(|_| xobj.as_i64().map(|i| i as f64))? * sx);
+                y = y + (yobj.as_f64().or_else(|_| yobj.as_i64().map(|i| i as f64))? * sy);
 
                 line = false; // We are starting a new line, so setting line to false
             },
