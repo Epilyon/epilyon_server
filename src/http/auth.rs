@@ -80,7 +80,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
 }
 
 #[post("/start")]
-pub async fn start(state: web::Data<AuthState>, info: web::Query<StartQuery>) -> impl Responder {
+pub async fn start(state: web::Data<AuthState>, info: web::Json<StartQuery>) -> impl Responder {
     // TODO: Rate limit this
     let token = gen_uuid();
 
