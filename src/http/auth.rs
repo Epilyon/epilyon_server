@@ -60,8 +60,9 @@ pub struct AuthState {
 pub struct AuthSession {
     state: String,
     nonce: String,
+    device_token: String,
     expires_at: DateTime<Utc>,
-    result: Option<(u32, CRIUser)>
+    result: Option<(u32, CRIUser)>,
 }
 
 pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>) {
@@ -79,13 +80,14 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
 }
 
 #[post("/start")]
-pub async fn start(state: web::Data<AuthState>) -> impl Responder {
+pub async fn start(state: web::Data<AuthState>, info: web::Query<StartQuery>) -> impl Responder {
     // TODO: Rate limit this
     let token = gen_uuid();
 
     state.sessions.epilock().insert(token.clone(), AuthSession {
         state: token.clone(),
         nonce: gen_uuid(),
+        device_token: info.device_token.clone(),
         expires_at: Utc::now() + Duration::milliseconds(AUTH_SESSION_DURATION),
         result: None
     });
@@ -135,7 +137,8 @@ pub async fn redirect(
     user.session = Some(UserSession {
         token: result.state.clone(),
         ms_user,
-        expires_at: Utc::now() + Duration::milliseconds(USER_SESSION_DURATION)
+        expires_at: Utc::now() + Duration::milliseconds(USER_SESSION_DURATION),
+        device_token: session.device_token.clone()
     });
 
     db.replace("users", &user._key, user.clone()).await?;
@@ -229,6 +232,11 @@ impl SessionContainer for HashMap<String, AuthSession> {
 
         self.get_mut(token)
     }
+}
+
+#[derive(Deserialize)]
+pub struct StartQuery {
+    device_token: String
 }
 
 #[derive(Deserialize)]

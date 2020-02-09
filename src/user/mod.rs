@@ -38,15 +38,15 @@ pub struct User {
     pub cri_user: cri::CRIUser,
     pub groups: Vec<u8>, // Group IDs
 
-    pub session: Option<UserSession>, // Only 'Some' if the user is logged
-    pub device_id: Option<String>
+    pub session: Option<UserSession> // Only 'Some' if the user is logged
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct UserSession {
     pub token: String,
     pub expires_at: DateTime<Utc>,
-    pub ms_user: MSUser
+    pub ms_user: MSUser,
+    pub device_token: String
 }
 
 pub async fn update_users(db: &DatabaseConnection) -> Result<(), UserError> {

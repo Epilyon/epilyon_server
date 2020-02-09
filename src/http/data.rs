@@ -64,19 +64,23 @@ impl ResponseError for DataError {
             NotLogged =>
                 StatusCode::FORBIDDEN,
             MSError { error }=> {
-                error!("Microsoft error during auth request : {}", error);
+                error!("Microsoft error during request : {}", error);
                 StatusCode::INTERNAL_SERVER_ERROR
             },
             DatabaseError { error } => {
-                error!("Database error during auth request : {}", error);
+                error!("Database error during request : {}", error);
                 StatusCode::INTERNAL_SERVER_ERROR
             },
             PDFError { error } => {
-                error!("PDF parsing error during auth request : {}", error);
+                error!("PDF parsing error during request : {}", error);
                 StatusCode::INTERNAL_SERVER_ERROR
             },
             DateParsingError { error } => {
-                error!("Date parsing error during auth request : {}", error);
+                error!("Date parsing error during request : {}", error);
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
+            PushNotifError { error } => {
+                error!("Push notification error during request : {}", error);
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         }
