@@ -52,6 +52,7 @@ pub struct UserData {
     history: Vec<QCMResult>
 }
 
+// TODO: Refresh all users on server startup
 // TODO: Outlook push notif for QCMs
 
 async fn refresh(db: DatabaseConnection) {
@@ -141,13 +142,11 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> Result<()
         ).await?;
     }
 
-    println!("BEFORE RELEASE");
     if *guard {
         // So that the Mutex is unlocked here
         print!("");
     }
 
-    println!("AFTER RELEASE");
     Ok(())
 }
 
