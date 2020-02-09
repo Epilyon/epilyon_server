@@ -154,8 +154,10 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
         }
     }
 
+    let mut new_qcms: Vec<QCMResult> = Vec::new();
     for (_, v) in qcms {
         // TODO: Notification for this 'v'
+        new_qcms.push(v.clone());
         history.qcms.push(v);
     }
 
@@ -168,7 +170,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
         db.replace("qcm_histories", &history._key, history.clone()).await?;
     }
 
-    Ok(history.qcms.clone())
+    Ok(new_qcms)
 }
 
 pub async fn get_next_qcm(db: &DatabaseConnection, user: &User) -> Result<Option<NextQCM>, DataError> {
