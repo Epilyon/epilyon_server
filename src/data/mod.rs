@@ -16,6 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 use std::time::Duration as StdDuration;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::collections::HashMap;
 
 use serde::Serialize;
 use serde_json::json;
@@ -24,10 +26,12 @@ use chrono::Utc;
 use actix::prelude::{Actor, Context, AsyncContext};
 use failure::Fail;
 use log::{info, error};
+use lazy_static::lazy_static;
 
 use crate::user::{User, microsoft};
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::user::microsoft::MSError;
+use crate::sync::EpiLock;
 
 mod qcm;
 mod pdf;
@@ -37,6 +41,10 @@ use pdf::PDFError;
 use qcm::{NextQCM, QCMResult};
 
 const REFRESH_RATE: u64 = 5 * 60; // In seconds (= 5 minutes)
+
+lazy_static! {
+    static ref REFRESH_LOCKS: Mutex<HashMap<u32, Arc<Mutex<bool>>>> = Mutex::new(HashMap::new());
+}
 
 #[derive(Serialize)]
 pub struct UserData {
@@ -86,6 +94,28 @@ async fn refresh(db: DatabaseConnection) {
 }
 
 pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> Result<(), DataError> {
+    // This following code is dirty but needed to prevent two refreshes being done at the same time
+
+    #[allow(unused_assignments)]
+    let mut user_lock: Option<Arc<Mutex<bool>>> = None;
+
+    {
+        // We enter a new scope, so that the REFRESH_LOCKS map is locked only here and not for
+        // the whole refresh process
+        let mut locks = REFRESH_LOCKS.epilock();
+
+        if !locks.contains_key(&user.id) {
+            locks.insert(user.id, Arc::new(Mutex::new(true)));
+        }
+
+        user_lock = locks.get(&user.id).map(|a| a.clone());
+    }
+
+    let user_lock = user_lock.unwrap(); // Can't fail
+    let guard = user_lock.epilock();
+
+    // Dirty part ends here
+
     let session = user.session.as_mut().ok_or(DataError::NotLogged)?;
 
     if Utc::now() - Duration::minutes(5) > session.ms_user.expires_at {
@@ -111,6 +141,13 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> Result<()
         ).await?;
     }
 
+    println!("BEFORE RELEASE");
+    if *guard {
+        // So that the Mutex is unlocked here
+        print!("");
+    }
+
+    println!("AFTER RELEASE");
     Ok(())
 }
 
