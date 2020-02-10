@@ -68,10 +68,9 @@ pub async fn notify(
 ) -> Result<HttpResponse, DataError> {
     let query = request.query_string();
 
-
     if query.starts_with("validationToken=") {
         let token = String::from(&query[16..]);
-        let decoded = percent_decode_str(&token).decode_utf8()?;
+        let decoded = percent_decode_str(&token).decode_utf8()?.replace("+", " ");
 
         return Ok(HttpResponse::Ok().body(String::from(&*decoded)));
     }
