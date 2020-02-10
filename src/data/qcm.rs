@@ -74,7 +74,9 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
         let date = &mail.subject[28..38];
         let naive_date = NaiveDate::parse_from_str(date, "%d/%m/%Y")?;
 
-        if history.qcms.iter().find(|s| s.date == naive_date).is_some() {
+        if history.qcms.iter().find(|s| {
+            s.date == naive_date && s.grades.len() == 7
+        }).is_some() {
             continue;
         }
 
