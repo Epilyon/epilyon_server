@@ -213,7 +213,7 @@ pub async fn handle_notification(db: &DatabaseConnection, notification: Notifica
         let mut user = result.swap_remove(0);
 
         if let Err(e) = refresh_user(db, &mut user).await {
-            println!("Data error while processing MS notification : {}", e);
+            error!("Data error while processing MS notification : {}", e);
         }
 
         // We de not return an error to not panic MS APIs
@@ -264,7 +264,7 @@ impl Actor for RefreshActor {
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("Started refresh process (every {} seconds)", REFRESH_RATE);
 
-        ctx.spawn(actix::fut::wrap_future::<_, Self>(refresh(a.db.clone())));
+        ctx.spawn(actix::fut::wrap_future::<_, Self>(refresh(self.db.clone())));
 
         ctx.run_interval(StdDuration::from_secs(REFRESH_RATE), move |a, ctx| {
             ctx.spawn(actix::fut::wrap_future::<_, Self>(refresh(a.db.clone())));

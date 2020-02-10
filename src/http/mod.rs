@@ -20,7 +20,7 @@ use std::io::Error as IOError;
 use failure::Fail;
 use log::info;
 use actix_web::{
-    web, http,
+    web,
     App, HttpServer,
     middleware::Logger
 };

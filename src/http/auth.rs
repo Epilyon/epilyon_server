@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use log::{info, error};
+use log::{info, warn, error};
 use failure::Fail;
 use lazy_static::lazy_static;
 use chrono::{DateTime, Utc};
@@ -204,7 +204,10 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
 pub async fn logout(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, AuthError> {
     user.session = None;
 
-    remove_subscriptions_for(db.get_ref(), &user).await?;
+    if let Err(e) = remove_subscriptions_for(db.get_ref(), &user).await {
+        warn!("Couldn't remove user subscriptions : {}", e);
+        warn!("Ignoring");
+    }
 
     db.replace("users", &user._key, user.clone()).await?;
 

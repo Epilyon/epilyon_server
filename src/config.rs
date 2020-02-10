@@ -48,6 +48,7 @@ pub struct EpiConfig {
     pub ms_scopes: Vec<String>,
     pub ms_redirect_uri: String,
     pub ms_webhook_uri: String,
+    pub ms_webhook_key: String,
     pub ms_secret: String,
 
     pub firebase_secret: String
@@ -74,6 +75,7 @@ fn default() -> EpiConfig {
         ms_scopes: vec!["openid".to_string(), "offline_access".to_string(), "profile".to_string(), "mail.read".to_string()],
         ms_redirect_uri: "http://localhost:7899/auth/redirect".to_string(),
         ms_webhook_uri: "http://localhost:7899/data/notify".to_string(),
+        ms_webhook_key: "a random secret key".to_string(),
         ms_secret: "your_secret_key".to_string(),
 
         firebase_secret: "your_very_secret_key".to_string()

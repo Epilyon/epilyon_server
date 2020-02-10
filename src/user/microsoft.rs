@@ -46,7 +46,7 @@ pub fn get_redirect_uri(state: &str, nonce: &str) -> String {
     format!(
         "{}/oauth2/v2.0/authorize?response_type=code&response_mode=form_post&redirect_uri={}&client_id={}&scope={}&prompt=select_account&state={}&nonce={}",
         CONFIG.ms_tenant_url,
-        utf8_percent_encode(CONFIG.ms_redirect_uri.clone(), NON_ALPHANUMERIC).to_string(),
+        utf8_percent_encode(&CONFIG.ms_redirect_uri.clone(), NON_ALPHANUMERIC).to_string(),
         &CONFIG.ms_client_id,
         scopes,
         state,
@@ -164,7 +164,7 @@ pub async fn subscribe(user: &MSUser, resource: &str) -> Result<SubscriptionResp
 }
 
 pub async fn renew_subscription(user: &MSUser, id: &str) -> Result<(), MSError> {
-    reqwest::Client::new().patch(filter!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
+    reqwest::Client::new().patch(&format!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
         .header("Authorization", format!("Bearer {}", user.access_token))
         .json(&json!({
             "expirationDateTime": Utc::now() + Duration::days(2)
@@ -175,9 +175,9 @@ pub async fn renew_subscription(user: &MSUser, id: &str) -> Result<(), MSError> 
 }
 
 pub async fn unsubscribe(user: &MSUser, id: &str) -> Result<(), MSError> {
-    reqwest::Client::new().delete(format!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
+    reqwest::Client::new().delete(&format!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
         .header("Authorization", format!("Bearer {}", user.access_token))
-        .send().await?
+        .send().await?;
 
     Ok(())
 }

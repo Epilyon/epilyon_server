@@ -130,7 +130,7 @@ impl ResponseError for DataError {
                 StatusCode::BAD_REQUEST
             },
             InvalidClientState => {
-                error!("Notification with an invalid client state was received : {}", error);
+                error!("Notification with an invalid client state was received");
                 StatusCode::BAD_REQUEST
             }
         }
