@@ -40,7 +40,7 @@ mod push_notif;
 use pdf::PDFError;
 use qcm::{NextQCM, QCMResult};
 
-const REFRESH_RATE: u64 = 5 * 60; // In seconds (= 5 minutes)
+const REFRESH_RATE: u64 = 30 * 60; // In seconds (= 30 minutes)
 
 lazy_static! {
     static ref REFRESH_LOCKS: Mutex<HashMap<u32, Arc<Mutex<bool>>>> = Mutex::new(HashMap::new());
@@ -111,8 +111,8 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> Result<()
     let subscription: Vec<MSSubscription> = db.single_query(
         r"
             FOR subscription IN subscriptions
-                FILTER subscription.user = @id
-                return subscription
+                FILTER subscription.user == @id
+                RETURN subscription
         ",
         json!({
             "id": &user.id

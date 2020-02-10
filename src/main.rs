@@ -36,6 +36,8 @@ use db::DatabaseConnection;
 use user::UserError;
 use data::RefreshActor;
 
+// TODO: Find a way to print responses that failed to be parsed
+
 #[actix_rt::main]
 async fn main() {
     if std::env::var("EPILYON_LOG").is_err() {

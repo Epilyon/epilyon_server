@@ -18,7 +18,7 @@
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use failure::Fail;
-use log::info;
+use log::{info, warn};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CRIUser {
@@ -67,7 +67,7 @@ pub async fn fetch_users(cri_url: &str, username: &str, password: &str, promos: 
                     }
                 },
                 None => {
-                    info!("Unknown region for user '{} {}', skipping...", u.firstname, u.lastname);
+                    warn!("Unknown region for user '{} {}', skipping...", u.firstname, u.lastname);
                 }
             }
 
