@@ -18,6 +18,8 @@
 use failure::Fail;
 use serde::de::DeserializeOwned;
 
+// TODO: Use macros
+
 pub fn decode<T: DeserializeOwned>(jwt: &str) -> Result<T, JwtParsingError> {
     let split: Vec<_> = jwt.split(".").collect();
     let claims = split.get(1).ok_or(JwtParsingError::InvalidFormat)?;

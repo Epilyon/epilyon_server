@@ -204,6 +204,8 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
 #[post("/logout")]
 pub async fn logout(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, AuthError> {
     user.session = None;
+    // TODO: Remove user subscriptions
+
     db.replace("users", &user._key, user.clone()).await?;
 
     Ok(HttpResponse::Ok().json(json!({

@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 use std::time::Duration as StdDuration;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
 use serde::Serialize;
@@ -30,7 +30,7 @@ use lazy_static::lazy_static;
 
 use crate::user::{User, microsoft};
 use crate::db::{DatabaseConnection, DatabaseError};
-use crate::user::microsoft::MSError;
+use crate::user::microsoft::{MSError, Notification, MSSubscription};
 use crate::sync::EpiLock;
 
 mod qcm;
@@ -53,7 +53,6 @@ pub struct UserData {
 }
 
 // TODO: Refresh all users on server startup
-// TODO: Outlook push notif for QCMs
 
 async fn refresh(db: DatabaseConnection) {
     let logged_users: Result<Vec<User>, DatabaseError> = db.single_query(
@@ -95,35 +94,45 @@ async fn refresh(db: DatabaseConnection) {
 }
 
 pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> Result<(), DataError> {
-    // This following code is dirty but needed to prevent two refreshes being done at the same time
-
-    #[allow(unused_assignments)]
-    let mut user_lock: Option<Arc<Mutex<bool>>> = None;
-
-    {
-        // We enter a new scope, so that the REFRESH_LOCKS map is locked only here and not for
-        // the whole refresh process
-        let mut locks = REFRESH_LOCKS.epilock();
-
-        if !locks.contains_key(&user.id) {
-            locks.insert(user.id, Arc::new(Mutex::new(true)));
-        }
-
-        user_lock = locks.get(&user.id).map(|a| a.clone());
-    }
-
-    let user_lock = user_lock.unwrap(); // Can't fail
+    let user_lock = get_user_lock(user);
     let guard = user_lock.epilock();
 
     // Dirty part ends here
 
+    let user_clone = user.clone();
     let session = user.session.as_mut().ok_or(DataError::NotLogged)?;
 
     if Utc::now() - Duration::minutes(5) > session.ms_user.expires_at {
         session.ms_user = microsoft::refresh(&session.ms_user).await?;
     }
 
-    db.update("users", &user._key, user.clone()).await?;
+    db.update("users", &user._key, user_clone).await?;
+
+    let subscription: Vec<MSSubscription> = db.single_query(
+        r"
+            FOR subscription IN subscriptions
+                FILTER subscription.user = @id
+                return subscription
+        ",
+        json!({
+            "id": &user.id
+        })
+    ).await?;
+
+    if subscription.len() == 0 {
+        let subscription = microsoft::subscribe(
+            &session.ms_user,
+            "/me/mailfolders('inbox')/messages"
+        ).await?;
+
+        db.add("subscriptions", json!({
+            "user": &user.id,
+            "id": &subscription.id,
+            "expires_at": &subscription.expirationDateTime
+        })).await?;
+    } else {
+        // TODO: Renew subscription if needed
+    }
 
     let qcms = qcm::fetch_qcms(db, user).await?;
     if let Some(qcm) = qcms.get(0) {
@@ -150,11 +159,54 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> Result<()
     Ok(())
 }
 
+// This is dirty but needed to prevent two refreshes being done at the same time
+pub fn get_user_lock(user: &User) -> Arc<Mutex<bool>> {
+    let mut locks = REFRESH_LOCKS.epilock();
+
+    if !locks.contains_key(&user.id) {
+        locks.insert(user.id, Arc::new(Mutex::new(true)));
+    }
+
+    locks.get(&user.id).unwrap().clone()
+}
+
 pub async fn get_data(db: &DatabaseConnection, user: &User) -> Result<UserData, DataError> {
     Ok(UserData {
         next_qcm: qcm::get_next_qcm(db, user).await?,
         history: qcm::get_qcm_history(db, user).await?
     })
+}
+
+pub async fn handle_notification(db: &DatabaseConnection, notification: Notification) -> Result<(), DataError> {
+    // TODO: Check client state
+    // TODO: Renew subscriptions
+
+    let mut result: Vec<User> = db.single_query(
+        r"
+            LET user_id = (
+                FOR subscription IN subscriptions
+                    FILTER subscription.id == @id
+                    RETURN subscription.user
+            )
+
+            FOR uid IN user_id
+                FOR user IN users
+                    FILTER user.id == uid
+                    RETURN user
+        ",
+        json!({
+            "id": notification.subscriptionId
+        })
+    ).await?;
+
+    if result.len() > 0 {
+        let mut user = result.swap_remove(0);
+        refresh_user(db, &mut user).await
+    } else {
+        // We de not return an error to not panic MS APIs
+        // TODO: Print error
+        Ok(())
+    }
 }
 
 pub struct RefreshActor {
@@ -201,6 +253,21 @@ pub enum DataError {
     #[fail(display = "Push notification error : {}", error)]
     PushNotifError {
         error: reqwest::Error
+    },
+
+    #[fail(display = "Unable to read request payload : {}", error)]
+    PayloadReadingError {
+        error: actix_http::error::PayloadError
+    },
+
+    #[fail(display = "Unable to decode request payload as a string : {}", error)]
+    PayloadDecodingError {
+        error: std::str::Utf8Error
+    },
+
+    #[fail(display = "Unable to decode request payload as json : {}", error)]
+    JsonParsingError {
+        error: serde_json::Error
     }
 }
 
@@ -208,3 +275,6 @@ from_error!(DatabaseError, DataError, DataError::DatabaseError);
 from_error!(MSError, DataError, DataError::MSError);
 from_error!(PDFError, DataError, DataError::PDFError);
 from_error!(chrono::ParseError, DataError, DataError::DateParsingError);
+from_error!(actix_http::error::PayloadError, DataError, DataError::PayloadReadingError);
+from_error!(std::str::Utf8Error, DataError, DataError::PayloadDecodingError);
+from_error!(serde_json::Error, DataError, DataError::JsonParsingError);

@@ -17,18 +17,20 @@
  */
 use serde_json::json;
 use log::error;
+use futures::StreamExt;
 use actix_web::{
     web,
     get, post,
-    HttpResponse,
+    HttpRequest, HttpResponse,
     ResponseError,
     dev::HttpResponseBuilder,
     http::StatusCode
 };
 
 use crate::db::DatabaseConnection;
-use crate::data::{get_data, refresh_user, DataError};
+use crate::data::{get_data, refresh_user, handle_notification, DataError};
 use crate::user::User;
+use crate::user::microsoft::{MSResponse, Notification};
 
 pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>) {
     cfg.service(
@@ -54,6 +56,31 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
     Ok(HttpResponse::Ok().json(json!({
         "success": true
     })))
+}
+
+#[post("/notify")]
+pub async fn notify(
+    request: HttpRequest,
+    db: web::Data<DatabaseConnection>,
+    mut payload: web::Payload
+) -> Result<HttpResponse, DataError> {
+    let query = request.query_string();
+
+    if query.starts_with("validationToken=") {
+        return Ok(HttpResponse::Ok().body(String::from(&query[16..])));
+    }
+
+    let mut bytes = web::BytesMut::new();
+    while let Some(item) = payload.next().await {
+        bytes.extend_from_slice(&item?);
+    }
+
+    let body = std::str::from_utf8(&bytes)?;
+    let result: MSResponse<Notification> = serde_json::from_str(body)?;
+
+    handle_notification(db.get_ref(), result.value.clone()).await?;
+
+    Ok(HttpResponse::Accepted().finish())
 }
 
 impl ResponseError for DataError {
@@ -82,6 +109,18 @@ impl ResponseError for DataError {
             PushNotifError { error } => {
                 error!("Push notification error during request : {}", error);
                 StatusCode::INTERNAL_SERVER_ERROR
+            },
+            PayloadReadingError { error } => {
+                error!("Payload reading error during request : {}", error);
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
+            PayloadDecodingError { error } => {
+                error!("Payload UTF-8 decoding error during request : {}", error);
+                StatusCode::BAD_REQUEST
+            },
+            JsonParsingError { error } => {
+                error!("Payload JSON decoding error during request : {}", error);
+                StatusCode::BAD_REQUEST
             }
         }
     }

@@ -96,8 +96,7 @@ pub async fn update_users(db: &DatabaseConnection) -> Result<(), UserError> {
             "cri_user": user.clone(),
             "groups": Vec::<String>::new(),
 
-            "session": Option::<UserSession>::None,
-            "device_id": Option::<String>::None
+            "session": Option::<UserSession>::None
         })).await?;
     }
 

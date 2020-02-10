@@ -5,6 +5,8 @@ authors = ["Adrien Navratil <adrien1975@live.fr>"]
 edition = "2018"
 
 [dependencies]
+actix = "0.9.0"
+actix-http = "1.0.1"
 actix-web = "2.0.0"
 actix-rt = "1.0.0"
 log = "0.4.8"
@@ -22,4 +24,3 @@ uuid = { version = "0.8.1", features = ["v4"] }
 failure = "0.1.6"
 futures = "0.3.1"
 base64 = "0.11.0"
-actix = "0.9.0"

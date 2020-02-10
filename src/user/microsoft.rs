@@ -18,8 +18,10 @@
 use std::collections::HashMap;
 
 use serde::{Serialize, Deserialize};
+use serde_json::json;
 use chrono::{DateTime, Utc, TimeZone};
 use failure::Fail;
+use time::Duration;
 
 use crate::config::CONFIG;
 use crate::http::percent_encode;
@@ -29,6 +31,12 @@ use crate::http::jwt;
 pub struct MSUser {
     pub access_token: String,
     pub refresh_token: String,
+    pub expires_at: DateTime<Utc>
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MSSubscription {
+    pub id: String,
     pub expires_at: DateTime<Utc>
 }
 
@@ -139,6 +147,22 @@ pub async fn get_first_attachment(user: &MSUser, mail: &Mail, filter: &str) -> R
     }
 }
 
+pub async fn subscribe(user: &MSUser, resource: &str) -> Result<SubscriptionResponse, MSError> {
+    // TODO: Not do it on localhost
+
+    Ok(reqwest::Client::new().get("https://graph.microsoft.com/v1.0/subscriptions")
+        .header("Authorization", format!("Bearer {}", user.access_token))
+        .json(&json!({
+            "changeType": "created,updated",
+            "notificationUrl": &CONFIG.ms_webhook_uri,
+            "resource": resource,
+            "expirationDateTime": Utc::now() + Duration::days(2),
+            "clientState": "TODO: This"
+        }))
+        .send().await?
+        .json::<SubscriptionResponse>().await?)
+}
+
 async fn ms_request<T>(user: &MSUser, url: &str) -> Result<T, MSError>
     where T:  serde::de::DeserializeOwned
 {
@@ -177,8 +201,8 @@ struct RefreshResult {
 }
 
 #[derive(Deserialize)]
-struct MSResponse<T> {
-    value: T
+pub struct MSResponse<T> {
+    pub value: T
 }
 
 #[allow(non_snake_case)] // This is from a JSON, we can't change that
@@ -208,6 +232,21 @@ pub struct MailAddress {
 pub struct Attachment {
     pub name: String,
     pub contentBytes: String
+}
+
+#[allow(non_snake_case)] // This is from a JSON, we can't change that
+#[derive(Deserialize)]
+pub struct SubscriptionResponse {
+    pub id: String,
+    pub expirationDateTime: DateTime<Utc>
+}
+
+#[allow(non_snake_case)] // This is from a JSON, we can't change that
+#[derive(Clone, Deserialize)]
+pub struct Notification {
+    pub subscriptionId: String,
+    pub subscriptionExpirationDateTime: DateTime<Utc>,
+    pub clientState: String
 }
 
 #[derive(Fail, Debug)]
