@@ -36,7 +36,8 @@ use db::DatabaseConnection;
 use user::UserError;
 use data::RefreshActor;
 
-// TODO: Find a way to print responses that failed to be parsed
+// TODO: Rework errors in general
+// TODO: More logging
 
 #[actix_rt::main]
 async fn main() {

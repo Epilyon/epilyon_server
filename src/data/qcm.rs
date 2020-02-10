@@ -146,7 +146,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
                     _ => 0.0
                 };
 
-                total_n += total * coef;
+                total_n += total.min(0.0) * coef;
                 total_d += 10.0 * coef;
             }
 

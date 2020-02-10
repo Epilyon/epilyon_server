@@ -19,7 +19,7 @@ use std::time::Duration as StdDuration;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
-use serde::{Serialize, Deserialize};
+use serde::Serialize;
 use serde_json::json;
 use time::Duration;
 use chrono::Utc;
@@ -130,10 +130,17 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> Result<()
             "expires_at": &subscription.expirationDateTime
         })).await?;
     } else {
-        let subscription = subscriptions.swap_remove(0);
+        let mut subscription = subscriptions.swap_remove(0);
 
         if Utc::now() + Duration::hours(2) > subscription.expires_at {
-            microsoft::renew_subscription(&session.ms_user, &subscription.id).await?
+            let expires_at = microsoft::renew_subscription(
+                &session.ms_user,
+                &subscription.id
+            ).await?;
+
+            subscription.expires_at = expires_at;
+
+            db.replace("subcriptions", &subscription._key, subscription.clone()).await?;
         }
     }
 
@@ -201,11 +208,12 @@ pub async fn handle_notification(db: &DatabaseConnection, notification: Notifica
             FOR uid IN user_id
                 FOR user IN users
                     FILTER user.id == uid
-                    FILTER u.session.expires_at > @time
+                    FILTER user.session.expires_at > @time
                     RETURN user
         ",
         json!({
-            "id": notification.subscriptionId
+            "id": notification.subscriptionId,
+            "time": Utc::now().timestamp()
         })
     ).await?;
 
@@ -224,14 +232,11 @@ pub async fn handle_notification(db: &DatabaseConnection, notification: Notifica
 }
 
 pub async fn remove_subscriptions_for(db: &DatabaseConnection, user: &User) -> Result<(), DataError> {
-    let subscriptions: Vec<SubscriptionEntry> = db.single_query(
+    let subscriptions: Vec<MSSubscription> = db.single_query(
         r"
             FOR subscription IN subscriptions
                 FILTER subscription.user == @id
-                RETURN {
-                    key: subscription._key,
-                    id: subscription.id
-                }
+                RETURN subscription
         ",
         json!({
             "id": &user.id
@@ -242,16 +247,10 @@ pub async fn remove_subscriptions_for(db: &DatabaseConnection, user: &User) -> R
 
     for subscription in subscriptions {
         microsoft::unsubscribe(&session.ms_user, &subscription.id).await?;
-        db.remove("subscriptions", &subscription.key).await?;
+        db.remove("subscriptions", &subscription._key).await?;
     }
 
     Ok(())
-}
-
-#[derive(Deserialize)]
-struct SubscriptionEntry {
-    key: String,
-    id: String
 }
 
 pub struct RefreshActor {

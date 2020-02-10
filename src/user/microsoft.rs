@@ -36,6 +36,7 @@ pub struct MSUser {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MSSubscription {
+    pub _key: String,
     pub id: String,
     pub expires_at: DateTime<Utc>
 }
@@ -163,15 +164,17 @@ pub async fn subscribe(user: &MSUser, resource: &str) -> Result<SubscriptionResp
         .json::<SubscriptionResponse>().await?)
 }
 
-pub async fn renew_subscription(user: &MSUser, id: &str) -> Result<(), MSError> {
+pub async fn renew_subscription(user: &MSUser, id: &str) -> Result<DateTime<Utc>, MSError> {
+    let time = Utc::now() + Duration::days(2);
+
     reqwest::Client::new().patch(&format!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
         .header("Authorization", format!("Bearer {}", user.access_token))
         .json(&json!({
-            "expirationDateTime": Utc::now() + Duration::days(2)
+            "expirationDateTime": time
         }))
         .send().await?;
 
-    Ok(())
+    Ok(time)
 }
 
 pub async fn unsubscribe(user: &MSUser, id: &str) -> Result<(), MSError> {

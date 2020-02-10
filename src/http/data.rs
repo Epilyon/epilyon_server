@@ -53,6 +53,8 @@ pub async fn data_get(user: User, db: web::Data<DatabaseConnection>) -> Result<H
 
 #[post("/refresh")]
 pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, DataError> {
+    // TODO: Rate limit this
+
     refresh_user(db.as_ref(), &mut user).await?;
 
     Ok(HttpResponse::Ok().json(json!({
@@ -84,7 +86,10 @@ pub async fn notify(
     let mut result: MSResponse<Vec<Notification>> = serde_json::from_str(body)?;
 
     if result.value.len() > 0 {
-        handle_notification(db.get_ref(), result.value.swap_remove(0)).await?;
+        if let Err(e) = handle_notification(db.get_ref(), result.value.swap_remove(0)).await {
+            error!("Error while handling a notification : {}", e);
+            error!("Skipping");
+        }
     }
 
     Ok(HttpResponse::Accepted().finish())
