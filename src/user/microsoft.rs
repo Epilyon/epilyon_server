@@ -150,7 +150,7 @@ pub async fn get_first_attachment(user: &MSUser, mail: &Mail, filter: &str) -> R
 pub async fn subscribe(user: &MSUser, resource: &str) -> Result<SubscriptionResponse, MSError> {
     // TODO: Not do it on localhost
 
-    Ok(reqwest::Client::new().get("https://graph.microsoft.com/v1.0/subscriptions")
+    Ok(reqwest::Client::new().post("https://graph.microsoft.com/v1.0/subscriptions")
         .header("Authorization", format!("Bearer {}", user.access_token))
         .json(&json!({
             "changeType": "created,updated",
