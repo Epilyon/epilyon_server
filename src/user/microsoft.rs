@@ -22,9 +22,9 @@ use serde_json::json;
 use chrono::{DateTime, Utc, TimeZone};
 use failure::Fail;
 use time::Duration;
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
 use crate::config::CONFIG;
-use crate::http::percent_encode;
 use crate::http::jwt;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -46,7 +46,7 @@ pub fn get_redirect_uri(state: &str, nonce: &str) -> String {
     format!(
         "{}/oauth2/v2.0/authorize?response_type=code&response_mode=form_post&redirect_uri={}&client_id={}&scope={}&prompt=select_account&state={}&nonce={}",
         CONFIG.ms_tenant_url,
-        percent_encode(CONFIG.ms_redirect_uri.clone()),
+        utf8_percent_encode(CONFIG.ms_redirect_uri.clone(), NON_ALPHANUMERIC).to_string(),
         &CONFIG.ms_client_id,
         scopes,
         state,
@@ -148,7 +148,7 @@ pub async fn get_first_attachment(user: &MSUser, mail: &Mail, filter: &str) -> R
 }
 
 pub async fn subscribe(user: &MSUser, resource: &str) -> Result<SubscriptionResponse, MSError> {
-    // TODO: Not do it on localhost
+    // TODO: Don't do it on localhost
 
     Ok(reqwest::Client::new().post("https://graph.microsoft.com/v1.0/subscriptions")
         .header("Authorization", format!("Bearer {}", user.access_token))
@@ -157,10 +157,16 @@ pub async fn subscribe(user: &MSUser, resource: &str) -> Result<SubscriptionResp
             "notificationUrl": &CONFIG.ms_webhook_uri,
             "resource": resource,
             "expirationDateTime": Utc::now() + Duration::days(2),
-            "clientState": "TODO: This"
+            "clientState": &CONFIG.ms_webhook_key
         }))
         .send().await?
         .json::<SubscriptionResponse>().await?)
+}
+
+pub async fn unsubscribe(user: &MSUser, id: &str) -> Result<(), MSError> {
+    Ok(reqwest::Client::new().delete(format!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
+        .header("Authorization", format!("Bearer {}", user.access_token))
+        .send().await?)
 }
 
 async fn ms_request<T>(user: &MSUser, url: &str) -> Result<T, MSError>
@@ -246,7 +252,8 @@ pub struct SubscriptionResponse {
 pub struct Notification {
     pub subscriptionId: String,
     pub subscriptionExpirationDateTime: DateTime<Utc>,
-    pub clientState: String
+    pub clientState: String,
+    pub changeType: String
 }
 
 #[derive(Fail, Debug)]

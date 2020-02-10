@@ -40,6 +40,7 @@ use actix_web::{
 use crate::sync::EpiLock;
 use crate::user::{microsoft, UserSession, User, cri::CRIUser};
 use crate::db::{DatabaseConnection, DatabaseError};
+use crate::data::remove_subscriptions_for;
 
 const AUTH_SESSION_DURATION: i64 = 10 * 60 * 1000; // Ten minutes
 const USER_SESSION_DURATION: i64 = 2 * 7 * 24 * 60 * 60 * 1000; // Two weeks
@@ -49,8 +50,6 @@ lazy_static! {
         sessions: Mutex::new(HashMap::new()),
     });
 }
-
-// TODO: Device token
 
 pub struct AuthState {
     sessions: Mutex<HashMap<String, AuthSession>>
@@ -204,7 +203,8 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
 #[post("/logout")]
 pub async fn logout(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, AuthError> {
     user.session = None;
-    // TODO: Remove user subscriptions
+
+    remove_subscriptions_for(db.get_ref(), &user).await?;
 
     db.replace("users", &user._key, user.clone()).await?;
 

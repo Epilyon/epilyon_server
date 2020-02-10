@@ -18,18 +18,13 @@
 use failure::Fail;
 use serde::de::DeserializeOwned;
 
-// TODO: Use macros
-
 pub fn decode<T: DeserializeOwned>(jwt: &str) -> Result<T, JwtParsingError> {
     let split: Vec<_> = jwt.split(".").collect();
     let claims = split.get(1).ok_or(JwtParsingError::InvalidFormat)?;
-    let bytes = base64::decode(claims)
-        .map_err(|e| JwtParsingError::Base64Error { error: e })?;
-    let content = std::str::from_utf8(&bytes)
-        .map_err(|e| JwtParsingError::UTF8Error { error: e })?;
+    let bytes = base64::decode(claims)?;
+    let content = std::str::from_utf8(&bytes)?;
 
-    serde_json::from_str::<T>(content)
-        .map_err(|e| JwtParsingError::InvalidClaims { error: e })
+    Ok(serde_json::from_str::<T>(content)?)
 }
 
 #[derive(Debug, Fail)]
@@ -52,3 +47,7 @@ pub enum JwtParsingError {
         error: serde_json::Error
     }
 }
+
+from_error!(base64::DecodeError, JwtParsingError, JwtParsingError::Base64Error);
+from_error!(std::str::Utf8Error, JwtParsingError, JwtParsingError::UTF8Error);
+from_error!(serde_json::Error, JwtParsingError, JwtParsingError::InvalidClaims);

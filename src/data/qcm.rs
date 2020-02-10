@@ -156,7 +156,6 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
 
     let mut new_qcms: Vec<QCMResult> = Vec::new();
     for (_, v) in qcms {
-        // TODO: Notification for this 'v'
         new_qcms.push(v.clone());
         history.qcms.push(v);
     }

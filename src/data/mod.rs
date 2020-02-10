@@ -19,7 +19,7 @@ use std::time::Duration as StdDuration;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use serde_json::json;
 use time::Duration;
 use chrono::Utc;
@@ -28,6 +28,7 @@ use failure::Fail;
 use log::{info, error};
 use lazy_static::lazy_static;
 
+use crate::config::CONFIG;
 use crate::user::{User, microsoft};
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::user::microsoft::{MSError, Notification, MSSubscription};
@@ -52,9 +53,7 @@ pub struct UserData {
     history: Vec<QCMResult>
 }
 
-// TODO: Refresh all users on server startup
-
-async fn refresh(db: DatabaseConnection) {
+pub async fn refresh(db: DatabaseConnection) {
     let logged_users: Result<Vec<User>, DatabaseError> = db.single_query(
         r"
             FOR u IN users
@@ -178,8 +177,14 @@ pub async fn get_data(db: &DatabaseConnection, user: &User) -> Result<UserData, 
 }
 
 pub async fn handle_notification(db: &DatabaseConnection, notification: Notification) -> Result<(), DataError> {
-    // TODO: Check client state
-    // TODO: Renew subscriptions
+    if &notification.clientState != &CONFIG.ms_webhook_key {
+        return Err(DataError::InvalidClientState);
+    }
+
+    // Multiple notifications are sent for each email received, but we must process only one
+    if &notification.changeType != "created" {
+        return Ok(());
+    }
 
     let mut result: Vec<User> = db.single_query(
         r"
@@ -201,12 +206,47 @@ pub async fn handle_notification(db: &DatabaseConnection, notification: Notifica
 
     if result.len() > 0 {
         let mut user = result.swap_remove(0);
-        refresh_user(db, &mut user).await
-    } else {
+
+        if let Err(e) = refresh_user(db, &mut user).await {
+            println!("Data error while processing MS notification : {}", e);
+        }
+
         // We de not return an error to not panic MS APIs
-        // TODO: Print error
+        Ok(())
+    } else {
         Ok(())
     }
+}
+
+pub async fn remove_subscriptions_for(db: &DatabaseConnection, user: &User) -> Result<(), DataError> {
+    let subscriptions: Vec<SubscriptionEntry> = db.single_query(
+        r"
+            FOR subscription IN subscriptions
+                FILTER subscription.user == @id
+                RETURN {
+                    key: subscription._key,
+                    id: subscription.id
+                }
+        ",
+        json!({
+            "id": &user.id
+        })
+    ).await?;
+
+    let session = user.session.as_ref().ok_or(DataError::NotLogged)?;
+
+    for subscription in subscriptions {
+        microsoft::unsubscribe(&session.ms_user, &subscription.id).await?;
+        db.remove("subscriptions", &subscription.key).await?;
+    }
+
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct SubscriptionEntry {
+    key: String,
+    id: String
 }
 
 pub struct RefreshActor {
@@ -218,6 +258,8 @@ impl Actor for RefreshActor {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("Started refresh process (every {} seconds)", REFRESH_RATE);
+
+        ctx.spawn(actix::fut::wrap_future::<_, Self>(refresh(a.db.clone())));
 
         ctx.run_interval(StdDuration::from_secs(REFRESH_RATE), move |a, ctx| {
             ctx.spawn(actix::fut::wrap_future::<_, Self>(refresh(a.db.clone())));
@@ -268,7 +310,10 @@ pub enum DataError {
     #[fail(display = "Unable to decode request payload as json : {}", error)]
     JsonParsingError {
         error: serde_json::Error
-    }
+    },
+
+    #[fail(display = "Client state does not correspond")]
+    InvalidClientState
 }
 
 from_error!(DatabaseError, DataError, DataError::DatabaseError);

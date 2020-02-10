@@ -66,16 +66,3 @@ pub enum HttpError {
         error: IOError
     }
 }
-
-// TODO: Use percent_encoding crate
-struct EncodableString(String);
-
-pub fn percent_encode(s: String) -> String {
-    format!("{}", EncodableString(s))
-}
-
-impl std::fmt::Display for EncodableString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        http::header::http_percent_encode(f, self.0.as_bytes())
-    }
-}

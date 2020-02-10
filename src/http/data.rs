@@ -128,6 +128,10 @@ impl ResponseError for DataError {
             JsonParsingError { error } => {
                 error!("Payload JSON decoding error during request : {}", error);
                 StatusCode::BAD_REQUEST
+            },
+            InvalidClientState => {
+                error!("Notification with an invalid client state was received : {}", error);
+                StatusCode::BAD_REQUEST
             }
         }
     }
