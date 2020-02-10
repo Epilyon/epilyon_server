@@ -163,10 +163,23 @@ pub async fn subscribe(user: &MSUser, resource: &str) -> Result<SubscriptionResp
         .json::<SubscriptionResponse>().await?)
 }
 
-pub async fn unsubscribe(user: &MSUser, id: &str) -> Result<(), MSError> {
-    Ok(reqwest::Client::new().delete(format!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
+pub async fn renew_subscription(user: &MSUser, id: &str) -> Result<(), MSError> {
+    reqwest::Client::new().patch(filter!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
         .header("Authorization", format!("Bearer {}", user.access_token))
-        .send().await?)
+        .json(&json!({
+            "expirationDateTime": Utc::now() + Duration::days(2)
+        }))
+        .send().await?;
+
+    Ok(())
+}
+
+pub async fn unsubscribe(user: &MSUser, id: &str) -> Result<(), MSError> {
+    reqwest::Client::new().delete(format!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
+        .header("Authorization", format!("Bearer {}", user.access_token))
+        .send().await?
+
+    Ok(())
 }
 
 async fn ms_request<T>(user: &MSUser, url: &str) -> Result<T, MSError>

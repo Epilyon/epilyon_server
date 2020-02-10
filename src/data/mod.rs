@@ -107,7 +107,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> Result<()
 
     db.update("users", &user._key, user_clone).await?;
 
-    let subscription: Vec<MSSubscription> = db.single_query(
+    let mut subscriptions: Vec<MSSubscription> = db.single_query(
         r"
             FOR subscription IN subscriptions
                 FILTER subscription.user == @id
@@ -118,7 +118,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> Result<()
         })
     ).await?;
 
-    if subscription.len() == 0 {
+    if subscriptions.len() == 0 {
         let subscription = microsoft::subscribe(
             &session.ms_user,
             "/me/mailfolders('inbox')/messages"
@@ -130,7 +130,11 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> Result<()
             "expires_at": &subscription.expirationDateTime
         })).await?;
     } else {
-        // TODO: Renew subscription if needed
+        let subscription = subscriptions.swap_remove(0);
+
+        if Utc::now() + Duration::hours(2) > subscription.expires_at {
+            microsoft::renew_subscription(&session.ms_user, &subscription.id).await?
+        }
     }
 
     let qcms = qcm::fetch_qcms(db, user).await?;
@@ -197,6 +201,7 @@ pub async fn handle_notification(db: &DatabaseConnection, notification: Notifica
             FOR uid IN user_id
                 FOR user IN users
                     FILTER user.id == uid
+                    FILTER u.session.expires_at > @time
                     RETURN user
         ",
         json!({
