@@ -106,8 +106,9 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
         };
 
         let is_first_part = !mail.subject.contains("Part 2");
+        let existing = history.qcms.iter_mut().find(|s| s.date == naive_date);
 
-        if !qcms.contains_key(date) {
+        if !existing.is_some() {
             qcms.insert(date, QCMResult {
                 date: naive_date.clone(),
                 average: 0.0,
@@ -116,7 +117,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
         }
 
         // Always true
-        if let Some(qcm) = qcms.get_mut(date) {
+        if let Some(qcm) = existing {
             if qcm.grades.len() == 7 {
                 qcms.remove(date);
                 continue;
@@ -148,7 +149,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
                     _ => 0.0
                 };
 
-                total_n += total.min(0.0) * coef;
+                total_n += total.max(0.0) * coef;
                 total_d += 10.0 * coef;
             }
 

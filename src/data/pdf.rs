@@ -81,6 +81,11 @@ pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, PDFError> {
                     if let Object::String(ref bytes, _) = *operand {
                         let decoded_text = Document::decode_text(current_encoding, bytes);
 
+                        if decoded_text.contains(" ") {
+                            // In some QCM there is the user name at the top, we must not touch it
+                            continue;
+                        }
+
                         if line {
                             // Means that text is being written on the same line, so we add an offset
                             // (because text is drawn next to the previous one)
