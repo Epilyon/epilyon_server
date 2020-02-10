@@ -18,6 +18,7 @@
 use serde_json::json;
 use log::error;
 use futures::StreamExt;
+use percent_encoding::percent_decode_str;
 use actix_web::{
     web,
     get, post,
@@ -38,6 +39,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
             .app_data(db)
             .service(data_get)
             .service(refresh)
+            .service(notify)
     );
 }
 
@@ -66,8 +68,12 @@ pub async fn notify(
 ) -> Result<HttpResponse, DataError> {
     let query = request.query_string();
 
+
     if query.starts_with("validationToken=") {
-        return Ok(HttpResponse::Ok().body(String::from(&query[16..])));
+        let token = String::from(&query[16..]);
+        let decoded = percent_decode_str(&token).decode_utf8()?;
+
+        return Ok(HttpResponse::Ok().body(String::from(&*decoded)));
     }
 
     let mut bytes = web::BytesMut::new();
@@ -76,9 +82,11 @@ pub async fn notify(
     }
 
     let body = std::str::from_utf8(&bytes)?;
-    let result: MSResponse<Notification> = serde_json::from_str(body)?;
+    let mut result: MSResponse<Vec<Notification>> = serde_json::from_str(body)?;
 
-    handle_notification(db.get_ref(), result.value.clone()).await?;
+    if result.value.len() > 0 {
+        handle_notification(db.get_ref(), result.value.swap_remove(0)).await?;
+    }
 
     Ok(HttpResponse::Accepted().finish())
 }

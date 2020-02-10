@@ -67,7 +67,7 @@ pub enum HttpError {
     }
 }
 
-// Please forgive me for this
+// TODO: Use percent_encoding crate
 struct EncodableString(String);
 
 pub fn percent_encode(s: String) -> String {
