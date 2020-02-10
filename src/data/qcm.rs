@@ -53,6 +53,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
         }
     };
 
+    let should_notify = history.qcms.len() != 0; // If it is 0 it means it's the first launch/login
     history.qcms.sort_by(|a, b| a.date.cmp(&b.date).reverse());
 
     let mut starting_at = String::from("2019-10-01"); // Before that is the seminar
@@ -68,11 +69,11 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
         if history.qcms.len() == 0 { 50 } else { 6 }
     ).await?;
 
-    let mut qcms: HashMap<&str, QCMResult> = HashMap::new();
+    let mut qcms: HashMap<String, QCMResult> = HashMap::new();
 
     for mail in mails.iter() {
-        let date = &mail.subject[28..38];
-        let naive_date = NaiveDate::parse_from_str(date, "%d/%m/%Y")?;
+        let naive_date = NaiveDate::parse_from_str(&mail.subject[28..38], "%d/%m/%Y")?;
+        let date_key = format!("{}-{:02}-{:02}", naive_date.year(), naive_date.month(), naive_date.day());
 
         if history.qcms.iter().find(|s| {
             s.date == naive_date && s.grades.len() == 7
@@ -106,10 +107,9 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
         };
 
         let is_first_part = !mail.subject.contains("Part 2");
-        let existing = history.qcms.iter_mut().find(|s| s.date == naive_date);
 
-        if !existing.is_some() {
-            qcms.insert(date, QCMResult {
+        if !qcms.get(&date_key).is_some() {
+            qcms.insert(date_key.clone(), QCMResult {
                 date: naive_date.clone(),
                 average: 0.0,
                 grades: Vec::new()
@@ -117,9 +117,9 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
         }
 
         // Always true
-        if let Some(qcm) = existing {
+        if let Some(qcm) = qcms.get_mut(&date_key) {
             if qcm.grades.len() == 7 {
-                qcms.remove(date);
+                qcms.remove(&date_key);
                 continue;
             }
 
@@ -159,7 +159,10 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
 
     let mut new_qcms: Vec<QCMResult> = Vec::new();
     for (_, v) in qcms {
-        new_qcms.push(v.clone());
+        if should_notify {
+            new_qcms.push(v.clone());
+        }
+
         history.qcms.push(v);
     }
 
