@@ -48,6 +48,7 @@ pub async fn start(address: &str, port: u16, db: DatabaseConnection) -> Result<(
             }))
     })
         .bind(&address).map_err(|e| HttpError::BindError { address: address.clone(), error: e })?
+        .workers(4)
         .run();
 
     info!("Listening on http://{}...", address);
