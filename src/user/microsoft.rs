@@ -215,7 +215,7 @@ async fn call_graph(
     content: Option<Value>,
 ) -> MSResult<()> {
     let mut builder = HttpClient::new()
-        .request(method, url)
+        .request(method, &format!("https://graph.microsoft.com/v1.0{}", url))
         .header("Authorization", &format!("Bearer {}", user.access_token));
 
     if let Some(cont) = content {
