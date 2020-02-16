@@ -96,7 +96,7 @@ fn setup_logger() -> Result<(), fern::InitError> {
     let stdout_log = fern::Dispatch::new()
         .format(move |out, message, record| {
             let target = record.target();
-            let mut target_with_pad = " ".repeat((29i16 - target.len() as i16).max(0) as usize) + target;
+            let mut target_with_pad = " ".repeat((30i16 - target.len() as i16).max(0) as usize) + target;
 
             if record.level() != Level::Error {
                 target_with_pad = " ".to_owned() + &target_with_pad;
@@ -114,7 +114,7 @@ fn setup_logger() -> Result<(), fern::InitError> {
 
     let file_log = fern::Dispatch::new()
         .format(move |out, message, record| {
-            let pad = " ".repeat((29i16 - record.target().len() as i16).max(0) as usize);
+            let pad = " ".repeat((30i16 - record.target().len() as i16).max(0) as usize);
             let level_pad = if record.level() == Level::Error { "" } else { " " };
 
             out.finish(format_args!(

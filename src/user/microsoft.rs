@@ -175,7 +175,7 @@ pub async fn subscribe(user: &MSUser, resource: &str) -> MSResult<SubscriptionRe
         HttpMethod::POST,
         "/subscriptions",
         Some(json!({
-            "changeType": "created,updated",
+            "changeType": "created",
             "notificationUrl": &CONFIG.ms_webhook_uri,
             "resource": resource,
             "expirationDateTime": Utc::now() + Duration::days(2),
