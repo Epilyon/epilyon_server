@@ -95,7 +95,7 @@ pub async fn notify(
 
     if result.value.len() > 0 {
         if let Err(e) = handle_notification(db.get_ref(), result.value.swap_remove(0)).await {
-            error!("Error while handling a notification : {}", e);
+            error!("Error while handling a notification : {}", e.to_detailed_string());
             error!("Skipping");
         }
     }

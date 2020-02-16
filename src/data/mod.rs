@@ -128,10 +128,10 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
             ).await?;
 
             db.add("subscriptions", json!({
-            "user": &user.id,
-            "id": &subscription.id,
-            "expires_at": &subscription.expirationDateTime
-        })).await?;
+                "user": &user.id,
+                "id": &subscription.id,
+                "expires_at": &subscription.expirationDateTime
+            })).await?;
 
             info!(
                 "Registered subscription '{}' expiring at '{}'",
