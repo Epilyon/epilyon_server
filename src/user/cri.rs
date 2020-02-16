@@ -74,7 +74,7 @@ pub async fn fetch_users(cri_url: &str, username: &str, password: &str, promos: 
         }
     }
 
-    info!("Successfully filtered {} users from CRI out of {} fetched, from promos {:?}", users.len(), count, promos);
+    info!("Filtered {} users from CRI out of {} fetched, from promos {:?}", users.len(), count, promos);
 
     Ok(users)
 }

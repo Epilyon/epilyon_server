@@ -385,7 +385,7 @@ impl DataError {
                 result += &format!(". Serde dropped error '{}' for payload :\n{}", error, payload);
             },
             InvalidClientState { excepted, returned } => {
-                result += &format!(", excepted '{}', got '{}'", excepted, returned);
+                result += &format!(".\nExcepted : '{}'\nReceived : '{}'", excepted, returned);
             }
             _ => {}
         }

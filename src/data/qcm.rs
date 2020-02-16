@@ -93,7 +93,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
             continue;
         }
 
-        info!("Fetching and parsing the PDF of the mail '{}'", mail.subject);
+        info!("Parsing mail '{}'", mail.subject);
 
         let pdf = microsoft::get_first_attachment(
             &session.ms_user,
