@@ -204,6 +204,8 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
 pub async fn logout(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, AuthError> {
     user.session = None;
 
+    info!("Logging out user '{} {}'", user.cri_user.first_name, user.cri_user.last_name);
+
     if let Err(e) = remove_subscriptions_for(db.get_ref(), &user).await {
         warn!("Couldn't remove user subscriptions : {}", e);
         warn!("Ignoring");

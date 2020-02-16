@@ -136,7 +136,7 @@ pub async fn refresh(user: &MSUser) -> MSResult<MSUser> {
 
 pub async fn get_mails(user: &MSUser, filter: &str, count: usize) -> MSResult<Vec<Mail>> {
     let url = format!(
-        "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?\
+        "/me/mailFolders/inbox/messages?\
             $select=id,receivedDateTime,hasAttachments,subject,sender&\
             $orderby=receivedDateTime desc&\
             $filter={}&\
@@ -170,8 +170,6 @@ pub async fn get_first_attachment(user: &MSUser, mail: &Mail, filter: &str) -> M
 }
 
 pub async fn subscribe(user: &MSUser, resource: &str) -> MSResult<SubscriptionResponse> {
-    // TODO: Don't do it on localhost
-
     fetch_graph(
         user,
         HttpMethod::POST,

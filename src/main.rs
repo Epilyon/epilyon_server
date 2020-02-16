@@ -18,6 +18,7 @@
 use log::{info, warn, error, Level};
 use fern::colors::{ColoredLevelConfig, Color};
 use serde_json::{json, Value as JsonValue};
+use actix::Actor;
 
 const VERSION: &str = "0.1.0";
 
@@ -34,8 +35,7 @@ mod sync;
 use config::CONFIG;
 use db::DatabaseConnection;
 use user::UserError;
-
-// TODO: More logging
+use data::RefreshActor;
 
 #[actix_rt::main]
 async fn main() {
@@ -51,7 +51,6 @@ async fn main() {
     info!("Starting Epilyon server v{}", VERSION);
     info!("by Adrien 'Litarvan' Navratil");
     info!("---------------------------------------------------");
-
 
     let conn = db::open(
         &CONFIG.db_host,
@@ -70,10 +69,11 @@ async fn main() {
                 return;
             }
 
-            if let Err(e) = data::refresh_all(&db).await {
-                error!("Error while refreshing users : {}", e.to_detailed_string());
-                return;
-            }
+            data::refresh_all(&db).await;
+
+            RefreshActor {
+                db: db.clone()
+            }.start();
 
             if let Err(e) = http::start(&CONFIG.address, CONFIG.port, db).await {
                 error!("Error while running the HTTP server : {}", e);

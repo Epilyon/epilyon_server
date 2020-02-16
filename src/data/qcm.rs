@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
+use log::info;
 use time::Duration;
 use chrono::{DateTime, Utc, NaiveDate, Datelike};
 use serde::{Serialize, Deserialize};
@@ -52,6 +53,8 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
         }
     };
 
+    info!("Current QCM history has {} QCMs in it", history.qcms.len());
+
     let should_notify = history.qcms.len() != 0; // If it is 0 it means it's the first launch/login
     history.qcms.sort_by(|a, b| a.date.cmp(&b.date).reverse());
 
@@ -61,12 +64,16 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
         starting_at = format!("{}-{:02}-{:02}", starting_date.year(), starting_date.month(), starting_date.day());
     }
 
+    info!("Fetching QCM mails since date '{}'", starting_at);
+
     let mails = microsoft::get_mails(
         &session.ms_user,
         &format!("receivedDateTime gt {} and \
         startsWith(subject, '[EPITA] Résultat du QCM') and hasAttachments eq true", starting_at),
         if history.qcms.len() == 0 { 50 } else { 6 }
     ).await?;
+
+    info!("Got {} mails", mails.len());
 
     let mut qcms: HashMap<String, QCMResult> = HashMap::new();
 
@@ -82,8 +89,11 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
         if history.qcms.iter().find(|s| {
             s.date == naive_date && s.grades.len() == 7
         }).is_some() {
+            info!("QCM of date '{}' is already completed, skipping", date_key);
             continue;
         }
+
+        info!("Fetching and parsing the PDF of the mail '{}'", mail.subject);
 
         let pdf = microsoft::get_first_attachment(
             &session.ms_user,
@@ -158,6 +168,8 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
             }
 
             qcm.average = (total_n / total_d) * 20.0;
+
+            info!("QCM now has '{}' grades", qcm.grades.len());
         }
     }
 

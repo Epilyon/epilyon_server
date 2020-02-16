@@ -15,15 +15,17 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+use std::time::Duration as StdDuration;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
+use log::{info, warn, error};
 use serde::Serialize;
 use serde_json::json;
 use time::Duration;
 use chrono::Utc;
+use actix::prelude::{Actor, Context, AsyncContext};
 use failure::Fail;
-use log::{info, error};
 use lazy_static::lazy_static;
 
 use crate::config::CONFIG;
@@ -41,6 +43,8 @@ use qcm::{NextQCM, QCMResult};
 
 pub type DataResult<T> = Result<T, DataError>;
 
+const REFRESH_RATE: u64 = 2 * 24 * 60 * 60; // In seconds (= 2 days)
+
 lazy_static! {
     static ref REFRESH_LOCKS: Mutex<HashMap<u32, Arc<Mutex<bool>>>> = Mutex::new(HashMap::new());
 }
@@ -51,8 +55,8 @@ pub struct UserData {
     history: Vec<QCMResult>
 }
 
-pub async fn refresh_all(db: &DatabaseConnection) -> DataResult<()> {
-    let users: Vec<User> = db.single_query(
+pub async fn refresh_all(db: &DatabaseConnection) {
+    let logged_users: Result<Vec<User>, DatabaseError> = db.single_query(
         r"
             FOR u IN users
                 FILTER u.session != null
@@ -62,24 +66,30 @@ pub async fn refresh_all(db: &DatabaseConnection) -> DataResult<()> {
         json!({
             "time": Utc::now().timestamp()
         })
-    ).await?;
+    ).await;
 
-    info!("Refreshing {} users...", users.len());
+    match logged_users {
+        Ok(users) => {
+            info!("Refreshing {} users...", users.len());
 
-    for mut user in users {
-        if let Err(e) = refresh_user(&db, &mut user).await {
-            error!(
-                "Error while refreshing user '{} {}' : {}",
-                user.cri_user.first_name,
-                user.cri_user.last_name,
-                e.to_detailed_string()
-            );
+            for mut user in users {
+                if let Err(e) = refresh_user(&db, &mut user).await {
+                    error!(
+                        "Error while refreshing user '{} {}' : {}",
+                        user.cri_user.first_name,
+                        user.cri_user.last_name,
+                        e.to_detailed_string()
+                    );
 
-            error!("Skipping the refresh process for this user");
+                    error!("Skipping the refresh process for this user");
+                }
+            }
+        },
+        Err(e) => {
+            error!("Database error while fetching logged users : {}", e.to_detailed_string());
+            error!("Skipping current refresh");
         }
     }
-
-    Ok(())
 }
 
 pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResult<()> {
@@ -91,51 +101,69 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
     let user_clone = user.clone();
     let session = user.session.as_mut().ok_or(DataError::NotLogged)?;
 
+    info!("Refreshing user '{} {}'", user_clone.cri_user.first_name, user_clone.cri_user.last_name);
+
     if Utc::now() - Duration::minutes(5) > session.ms_user.expires_at {
         session.ms_user = microsoft::refresh(&session.ms_user).await?;
     }
 
     db.update("users", &user._key, user_clone).await?;
 
-    let mut subscriptions: Vec<MSSubscription> = db.single_query(
-        r"
+    if std::env::var("EPILYON_DONT_SUBSCRIBE").is_err() {
+        let mut subscriptions: Vec<MSSubscription> = db.single_query(
+            r"
             FOR subscription IN subscriptions
                 FILTER subscription.user == @id
                 RETURN subscription
         ",
-        json!({
+            json!({
             "id": &user.id
         })
-    ).await?;
-
-    if subscriptions.len() == 0 {
-        let subscription = microsoft::subscribe(
-            &session.ms_user,
-            "/me/mailfolders('inbox')/messages"
         ).await?;
 
-        db.add("subscriptions", json!({
+        if subscriptions.len() == 0 {
+            let subscription = microsoft::subscribe(
+                &session.ms_user,
+                "/me/mailfolders('inbox')/messages$filter=contains(subject, 'QCM')"
+            ).await?;
+
+            db.add("subscriptions", json!({
             "user": &user.id,
             "id": &subscription.id,
             "expires_at": &subscription.expirationDateTime
         })).await?;
-    } else {
-        let mut subscription = subscriptions.swap_remove(0);
 
-        if Utc::now() + Duration::hours(2) > subscription.expires_at {
-            let expires_at = microsoft::renew_subscription(
-                &session.ms_user,
-                &subscription.id
-            ).await?;
+            info!(
+                "Registered subscription '{}' expiring at '{}'",
+                subscription.id,
+                subscription.expirationDateTime
+            );
+        } else {
+            let mut subscription = subscriptions.swap_remove(0);
 
-            subscription.expires_at = expires_at;
+            if Utc::now() + Duration::hours(2) > subscription.expires_at {
+                let expires_at = microsoft::renew_subscription(
+                    &session.ms_user,
+                    &subscription.id
+                ).await?;
 
-            db.replace("subcriptions", &subscription._key, subscription.clone()).await?;
+                subscription.expires_at = expires_at;
+
+                db.replace("subscriptions", &subscription._key, subscription.clone()).await?;
+
+                info!(
+                    "Renewed subscription '{}', now expiring at '{}'",
+                    subscription.id,
+                    subscription.expires_at
+                );
+            }
         }
     }
 
     let qcms = qcm::fetch_qcms(db, user).await?;
     if let Some(qcm) = qcms.get(0) {
+        info!("{} new QCMs were received, sending push notification", qcms.len());
+
         push_notif::notify(
             user,
             "Résultats du QCM",
@@ -149,6 +177,8 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
                 }
             )
         ).await?;
+    } else {
+        info!("No new QCM (or first time fetch), not sending a notification");
     }
 
     if *guard {
@@ -190,6 +220,8 @@ pub async fn handle_notification(db: &DatabaseConnection, notification: Notifica
         return Ok(());
     }
 
+    info!("Received notification id '{}'", notification.subscriptionId);
+
     let mut result: Vec<User> = db.single_query(
         r"
             LET user_id = (
@@ -213,13 +245,16 @@ pub async fn handle_notification(db: &DatabaseConnection, notification: Notifica
     if result.len() > 0 {
         let mut user = result.swap_remove(0);
 
+        info!("Matching user is '{} {}'", user.cri_user.first_name, user.cri_user.last_name);
+
         if let Err(e) = refresh_user(db, &mut user).await {
-            error!("Data error while processing MS notification : {}", e);
+            error!("Failed refreshing after notification : {}", e.to_detailed_string());
         }
 
         // We de not return an error to not panic MS APIs
         Ok(())
     } else {
+        warn!("No matching user");
         Ok(())
     }
 }
@@ -241,9 +276,32 @@ pub async fn remove_subscriptions_for(db: &DatabaseConnection, user: &User) -> D
     for subscription in subscriptions {
         microsoft::unsubscribe(&session.ms_user, &subscription.id).await?;
         db.remove("subscriptions", &subscription._key).await?;
+
+        info!("Removing subscription '{}'", subscription.id);
     }
 
     Ok(())
+}
+
+pub struct RefreshActor {
+    pub db: DatabaseConnection
+}
+
+impl Actor for RefreshActor {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        info!("Started refresh process (every {} seconds)", REFRESH_RATE);
+
+        ctx.run_interval(StdDuration::from_secs(REFRESH_RATE), move |a, ctx| {
+            // We must do this for the reference to be borrowed in the async context
+            async fn do_refresh(db: DatabaseConnection) {
+                refresh_all(&db).await
+            }
+
+            ctx.spawn(actix::fut::wrap_future::<_, Self>(do_refresh(a.db.clone())));
+        });
+    }
 }
 
 #[derive(Fail, Debug)]
