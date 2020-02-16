@@ -124,7 +124,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
         if subscriptions.len() == 0 {
             let subscription = microsoft::subscribe(
                 &session.ms_user,
-                "/me/mailfolders('inbox')/messages$filter=contains(subject, 'QCM')"
+                "/me/mailfolders('inbox')/messages?$filter=contains(subject, 'QCM')"
             ).await?;
 
             db.add("subscriptions", json!({
