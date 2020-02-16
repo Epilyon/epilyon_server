@@ -1,4 +1,5 @@
 .idea/
 target/
+epilyon.log
 epilyon.toml
 *.iml

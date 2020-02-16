@@ -17,10 +17,12 @@
  */
 use log::info;
 use failure::Fail;
-use serde_json::{Value, json, Error};
+use serde_json::{Value, json};
 use reqwest::{Method as HttpMethod, Client as HttpClient, Error as HttpError};
 
 pub type DBResult<T> = Result<T, DatabaseError>;
+
+// TODO: Refresh ArangoDB JWT (1 month expiration)
 
 #[derive(Clone)]
 pub struct DatabaseConnection {
@@ -58,9 +60,7 @@ pub async fn open(
         })),
         None
     ).await.map_err(|e| match e {
-        DatabaseError::Unauthorized => DatabaseError::InvalidCredentials {
-            username: String::from(username)
-        },
+        DatabaseError::Unauthorized => DatabaseError::InvalidCredentials,
         _ => e
     })?;
 
@@ -107,7 +107,7 @@ impl DatabaseConnection {
         match res {
             Ok(_) => Ok(true),
             Err(e) => match e {
-                DatabaseError::NotFound => Ok(false),
+                DatabaseError::NotFound { .. } => Ok(false),
                 _ => Err(e)
             }
         }
@@ -204,32 +204,41 @@ impl DatabaseConnection {
 async fn request(
     http: &HttpClient,
     method: HttpMethod,
-    path: &str,
+    url: &str,
     content: Option<Value>,
     token: Option<&str>
 ) -> DBResult<Value> {
     use DatabaseError::*;
 
-    let mut builder = http.request(method, path);
+    let mut builder = http.request(method, url);
 
     if let Some(tok) = token {
         builder = builder.header("Authorization", format!("Bearer {}", tok));
     }
 
-    if let Some(cont) = content {
-        builder = builder.json(&cont);
+    if let Some(cont) = content.as_ref() {
+        builder = builder.json(cont);
     }
 
-    let value: Value = builder.send().await
-        .map_err(|error| HttpError { error })?
-        .json::<Value>().await
-        .map_err(|e| ParsingError { error: e.to_string() })?;
+    let response = builder.send().await?.text().await?;
+    let value: Value = serde_json::from_str(&response)
+        .map_err(move |e| ParsingError {
+            response,
+            error: e
+        })?;
 
     if let Some(true) = value["error"].as_bool() {
+        let request = content
+            .and_then(|v| serde_json::to_string_pretty(&v).ok())
+            .unwrap_or(String::from(""));
+
         return Err(match value["code"].as_i64().unwrap_or_else(|| 500) {
             401 => Unauthorized,
-            404 => NotFound,
-            code => UnknownArangoError {
+            404 => NotFound {
+                request
+            },
+            code => RemoteError {
+                request,
                 error: ArangoError {
                     code,
                     message: String::from(value.try_get_string("errorMessage")?)
@@ -243,35 +252,41 @@ async fn request(
 
 #[derive(Debug, Fail)]
 pub enum DatabaseError {
-    #[fail(display = "Invalid credentials for user '{}'", username)]
-    InvalidCredentials {
-        username: String
-    },
+    #[fail(display = "Invalid credentials used for the database")]
+    InvalidCredentials,
 
-    #[fail(display="Unauthorized action was performed")]
+    #[fail(display="An unauthorized action was performed")]
     Unauthorized,
 
-    #[fail(display="The required element was not found")]
-    NotFound,
+    #[fail(display="Can't find the requested element in the database")]
+    NotFound {
+        request: String
+    },
 
-    #[fail(display = "Unknown ArangoDB error : {}", error)]
-    UnknownArangoError {
+    #[fail(display = "Database request failed with an unknown error")]
+    RemoteError {
+        request: String,
         error: ArangoError
     },
 
-    #[fail(display = "JSON parsing error, server is probably not ArangoDB : {}", error)]
-    ParsingError {
-        error: String
+    #[fail(display = "JSON serialization error")]
+    SerializingError {
+        error: serde_json::Error
     },
 
-    #[fail(display = "Invalid ArangoDB response. This is really bad, please contact the devs. \
-    Missing value '{}' from response '{}'", missing, response)]
+    #[fail(display = "JSON parsing error, database is probably down")]
+    ParsingError {
+        response: String,
+        error: serde_json::Error
+    },
+
+    #[fail(display = "Invalid database response")]
     InvalidResponse {
         missing: String,
         response: String
     },
 
-    #[fail(display = "HTTP communication error : {}", error)]
+    #[fail(display = "Database communication error")]
     HttpError {
         error: HttpError
     }
@@ -283,14 +298,6 @@ impl std::fmt::Display for ArangoError {
     }
 }
 
-impl From<serde_json::Error> for DatabaseError {
-    fn from(e: Error) -> Self {
-        DatabaseError::ParsingError {
-            error: e.to_string()
-        }
-    }
-}
-
 trait TryGetString {
     fn try_get_string(&self, name: &str) -> DBResult<String>;
 }
@@ -299,7 +306,43 @@ impl TryGetString for Value {
     fn try_get_string(&self, name: &str) -> DBResult<String> {
         self[name].as_str().map_or(Err(DatabaseError::InvalidResponse {
             missing: String::from(name),
-            response: self.to_string()
+            response: serde_json::to_string_pretty(self).unwrap_or(self.to_string())
         }), |s| Ok(String::from(s)))
     }
 }
+
+impl DatabaseError {
+    pub fn to_detailed_string(&self) -> String {
+        use DatabaseError::*;
+
+        let mut result = String::new();
+        result += &self.to_string();
+
+        match self {
+            NotFound { request } => {
+                result += &format!(", request was :\n{}", request);
+            },
+            RemoteError { request, error } => {
+                result += &format!(", error is {} and request was :\n{}", error, request);
+            },
+            SerializingError { error } => {
+                result += &format!(", serde dropped error : {}", error);
+            },
+            ParsingError { response, error } => {
+                result += &format!(". Serde dropped error '{}' while parsing response :\n{}", error, response);
+            },
+            InvalidResponse { missing, response } => {
+                result += &format!(" : missing field '{}' from response :\n{}", missing, response);
+            },
+            HttpError { error } => {
+                result += &format!(", reqwuest dropped error '{}'", error);
+            }
+            _ => {}
+        }
+
+        result
+    }
+}
+
+from_error!(reqwest::Error, DatabaseError, DatabaseError::HttpError);
+from_error!(serde_json::Error, DatabaseError, DatabaseError::SerializingError);

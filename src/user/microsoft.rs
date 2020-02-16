@@ -18,14 +18,17 @@
 use std::collections::HashMap;
 
 use serde::{Serialize, Deserialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use chrono::{DateTime, Utc, TimeZone};
 use failure::Fail;
 use time::Duration;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use reqwest::{Method as HttpMethod, Client as HttpClient, Error as HttpError};
 
 use crate::config::CONFIG;
 use crate::http::jwt;
+
+type MSResult<T> = Result<T, MSError>;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MSUser {
@@ -55,10 +58,8 @@ pub fn get_redirect_uri(state: &str, nonce: &str) -> String {
     )
 }
 
-pub async fn identify(code: &str, nonce: &str) -> Result<(String, MSUser), MSError> {
-    let client = reqwest::Client::new();
+pub async fn identify(code: &str, nonce: &str) -> MSResult<(String, MSUser)> {
     let mut params = HashMap::new();
-
     let scopes: String = CONFIG.ms_scopes.join(" ");
 
     params.insert("client_info", "1");
@@ -69,20 +70,32 @@ pub async fn identify(code: &str, nonce: &str) -> Result<(String, MSUser), MSErr
     params.insert("scope", &scopes);
     params.insert("grant_type", "authorization_code");
 
-    let res = client.post(&format!("{}/oauth2/v2.0/token", CONFIG.ms_tenant_url))
-        .form(&params)
-        .send().await?
-        .json::<AuthorizationResult>().await?;
+    let res = fetch_json_with_form::<AuthorizationResult>(
+        &format!("{}/oauth2/v2.0/token", CONFIG.ms_tenant_url),
+        params
+    ).await?;
 
-    let access_token: TokenContent = jwt::decode(&res.access_token)?;
-    let id_token: IdTokenContent = jwt::decode(&res.id_token)?;
+    let access_token: TokenContent = jwt::decode(&res.access_token)
+        .map_err(|e| MSError::RemoteTokenError {
+            token: res.access_token.clone(),
+            error: e
+        })?;
+    let id_token: IdTokenContent = jwt::decode(&res.id_token)
+        .map_err(|e| MSError::RemoteTokenError {
+            token: res.id_token.clone(),
+            error: e
+        })?;
 
     if id_token.aud != CONFIG.ms_client_id {
-        return Err(MSError::InvalidAudience);
+        return Err(MSError::InvalidAudience {
+            audience: id_token.aud.clone()
+        });
     }
 
     if id_token.nonce != nonce {
-        return Err(MSError::InvalidNonce);
+        return Err(MSError::InvalidNonce {
+            nonce: id_token.nonce.clone()
+        });
     }
 
     Ok((access_token.unique_name.clone(), MSUser {
@@ -92,10 +105,8 @@ pub async fn identify(code: &str, nonce: &str) -> Result<(String, MSUser), MSErr
     }))
 }
 
-pub async fn refresh(user: &MSUser) -> Result<MSUser, MSError> {
-    let client = reqwest::Client::new();
+pub async fn refresh(user: &MSUser) -> MSResult<MSUser> {
     let mut params = HashMap::new();
-
     let scopes: String = CONFIG.ms_scopes.join(" ");
 
     params.insert("client_info", "1");
@@ -105,12 +116,16 @@ pub async fn refresh(user: &MSUser) -> Result<MSUser, MSError> {
     params.insert("scope", &scopes);
     params.insert("grant_type", "refresh_token");
 
-    let res = client.post(&format!("{}/oauth2/v2.0/token", CONFIG.ms_tenant_url))
-        .form(&params)
-        .send().await?
-        .json::<RefreshResult>().await?;
+    let res = fetch_json_with_form::<RefreshResult>(
+        &format!("{}/oauth2/v2.0/token", CONFIG.ms_tenant_url),
+        params
+    ).await?;
 
-    let access_token: TokenContent = jwt::decode(&res.access_token)?;
+    let access_token: TokenContent = jwt::decode(&res.access_token)
+        .map_err(|e| MSError::RemoteTokenError {
+            token: res.access_token.clone(),
+            error: e
+        })?;
 
     Ok(MSUser {
         access_token: res.access_token.clone(),
@@ -119,7 +134,7 @@ pub async fn refresh(user: &MSUser) -> Result<MSUser, MSError> {
     })
 }
 
-pub async fn get_mails(user: &MSUser, filter: &str, count: usize) -> Result<Vec<Mail>, MSError> {
+pub async fn get_mails(user: &MSUser, filter: &str, count: usize) -> MSResult<Vec<Mail>> {
     let url = format!(
         "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?\
             $select=id,receivedDateTime,hasAttachments,subject,sender&\
@@ -130,17 +145,23 @@ pub async fn get_mails(user: &MSUser, filter: &str, count: usize) -> Result<Vec<
         count
     );
 
-    ms_request::<Vec<Mail>>(user, &url).await
+    Ok(fetch_graph::<MSValue<Vec<Mail>>>(user, HttpMethod::GET, &url, None).await?.value)
 }
 
-pub async fn get_first_attachment(user: &MSUser, mail: &Mail, filter: &str) -> Result<Option<Attachment>, MSError> {
+pub async fn get_first_attachment(user: &MSUser, mail: &Mail, filter: &str) -> MSResult<Option<Attachment>> {
     let url = format!(
-        "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/{}/attachments?$filter={}",
+        "/me/mailFolders/inbox/messages/{}/attachments?$filter={}",
         &mail.id,
         filter
     );
 
-    let mut result = ms_request::<Vec<Attachment>>(user, &url).await?;
+    let mut result = fetch_graph::<MSValue<Vec<Attachment>>>(
+        user,
+        HttpMethod::GET,
+        &url,
+        None
+    ).await?.value;
+
     if result.len() > 0 {
         Ok(Some(result.swap_remove(0)))
     } else {
@@ -148,51 +169,126 @@ pub async fn get_first_attachment(user: &MSUser, mail: &Mail, filter: &str) -> R
     }
 }
 
-pub async fn subscribe(user: &MSUser, resource: &str) -> Result<SubscriptionResponse, MSError> {
+pub async fn subscribe(user: &MSUser, resource: &str) -> MSResult<SubscriptionResponse> {
     // TODO: Don't do it on localhost
 
-    Ok(reqwest::Client::new().post("https://graph.microsoft.com/v1.0/subscriptions")
-        .header("Authorization", format!("Bearer {}", user.access_token))
-        .json(&json!({
+    fetch_graph(
+        user,
+        HttpMethod::POST,
+        "/subscriptions",
+        Some(json!({
             "changeType": "created,updated",
             "notificationUrl": &CONFIG.ms_webhook_uri,
             "resource": resource,
             "expirationDateTime": Utc::now() + Duration::days(2),
             "clientState": &CONFIG.ms_webhook_key
         }))
-        .send().await?
-        .json::<SubscriptionResponse>().await?)
+    ).await
 }
 
-pub async fn renew_subscription(user: &MSUser, id: &str) -> Result<DateTime<Utc>, MSError> {
+pub async fn renew_subscription(user: &MSUser, id: &str) -> MSResult<DateTime<Utc>> {
     let time = Utc::now() + Duration::days(2);
 
-    reqwest::Client::new().patch(&format!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
-        .header("Authorization", format!("Bearer {}", user.access_token))
-        .json(&json!({
+    call_graph(
+        user,
+        HttpMethod::PATCH,
+        &format!("/subscriptions/{}", id),
+        Some(json!({
             "expirationDateTime": time
-        }))
-        .send().await?;
+        })),
+    ).await?;
 
     Ok(time)
 }
 
-pub async fn unsubscribe(user: &MSUser, id: &str) -> Result<(), MSError> {
-    reqwest::Client::new().delete(&format!("https://graph.microsoft.com/v1.0/subscriptions/{}", id))
-        .header("Authorization", format!("Bearer {}", user.access_token))
-        .send().await?;
+pub async fn unsubscribe(user: &MSUser, id: &str) -> MSResult<()> {
+    call_graph(
+        user,
+        HttpMethod::DELETE,
+        &format!("/subscriptions/{}", id),
+        None,
+    ).await
+}
+
+async fn call_graph(
+    user: &MSUser,
+    method: HttpMethod,
+    url: &str,
+    content: Option<Value>,
+) -> MSResult<()> {
+    let mut builder = HttpClient::new()
+        .request(method, url)
+        .header("Authorization", &format!("Bearer {}", user.access_token));
+
+    if let Some(cont) = content {
+        builder = builder.json(&cont);
+    }
+
+    builder.send().await?;
 
     Ok(())
 }
 
-async fn ms_request<T>(user: &MSUser, url: &str) -> Result<T, MSError>
-    where T:  serde::de::DeserializeOwned
+async fn fetch_graph<T>(
+    user: &MSUser,
+    method: HttpMethod,
+    url: &str,
+    content: Option<Value>
+) -> MSResult<T>
+    where T: serde::de::DeserializeOwned
 {
-    Ok(reqwest::Client::new().get(url)
-        .header("Authorization", format!("Bearer {}", user.access_token))
-        .send().await?
-        .json::<MSResponse<T>>().await?
-        .value)
+    let mut builder = HttpClient::new()
+        .request(method, &format!("https://graph.microsoft.com/v1.0{}", url));
+
+    if let Some(cont) = content {
+        builder = builder.json(&cont);
+    }
+
+    fetch_json(builder, Some(&user.access_token)).await
+}
+
+async fn fetch_json_with_form<T>(url: &str, content: HashMap<&str, &str>) -> MSResult<T>
+    where T: serde::de::DeserializeOwned
+{
+    let req = HttpClient::new()
+        .post(url)
+        .form(&content);
+
+    fetch_json(req, None).await
+        .map_err(|e| match e {
+            MSError::RemoteError { method, url, request: _, response, error } => MSError::RemoteError {
+                method,
+                url,
+                request: serde_json::to_string_pretty(&content).unwrap_or("".to_string()),
+                response,
+                error
+            },
+            e => e
+        })
+}
+
+async fn fetch_json<T>(mut builder: reqwest::RequestBuilder, token: Option<&str>) -> MSResult<T>
+    where T: serde::de::DeserializeOwned
+{
+    if let Some(tok) = token {
+        builder = builder.header("Authorization", format!("Bearer {}", tok));
+    }
+
+    let request = builder.build()?;
+    let method = format!("{}", request.method());
+    let url = format!("{}", request.url());
+    let response: String = HttpClient::new()
+        .execute(request).await?
+        .text().await?;
+
+    serde_json::from_str(&response)
+        .map_err(move |e| MSError::RemoteError {
+            method,
+            url,
+            request: String::new(),
+            response,
+            error: e
+        })
 }
 
 #[derive(Deserialize)]
@@ -223,7 +319,7 @@ struct RefreshResult {
 }
 
 #[derive(Deserialize)]
-pub struct MSResponse<T> {
+pub struct MSValue<T> {
     pub value: T
 }
 
@@ -274,29 +370,93 @@ pub struct Notification {
 
 #[derive(Fail, Debug)]
 pub enum MSError {
-    #[fail(display = "Remote MS server error / unexcepted response : {}. \
-    This is bad : please contact the devs", error)]
-    RemoteError {
-        error: reqwest::Error
+    #[fail(display = "HTTP error during request")]
+    HttpError {
+        error: HttpError
     },
 
-    #[fail(display = "Invalid token received from MS : {}. \
-    This is bad : please contact the devs", error)]
+    #[fail(display = "Microsoft request was rejected")]
+    RemoteError {
+        method: String,
+        url: String,
+        request: String,
+        response: String,
+        error: serde_json::Error
+    },
+
+    #[fail(display = "Invalid token received from Microsoft")]
     RemoteTokenError {
+        token: String,
         error: jwt::JwtParsingError
     },
 
-    #[fail(display = "Failed to decode MS response content : {}", error)]
+    #[fail(display = "Failed to decode mail attachment")]
     ContentDecodingError {
         error: base64::DecodeError
     },
 
     #[fail(display = "Given token was issued by another application")]
-    InvalidAudience,
+    InvalidAudience {
+        audience: String
+    },
 
-    #[fail(display = "Invalid nonce token, probable CSRF or similar attack")]
-    InvalidNonce
+    #[fail(display = "Invalid nonce token (probable CSRF or similar attack)")]
+    InvalidNonce {
+        nonce: String
+    }
 }
 
-from_error!(reqwest::Error, MSError, MSError::RemoteError);
-from_error!(jwt::JwtParsingError, MSError, MSError::RemoteTokenError);
+impl MSError {
+    pub fn to_detailed_string(&self) -> String {
+        use MSError::*;
+
+        let mut result = String::new();
+        result += &self.to_string();
+
+        match self {
+            HttpError { error } => {
+                result += &format!(", reqwest dropped error '{}'", error);
+            },
+            RemoteError { method, url, request, response, error } => {
+                result += &format!(
+                    "\nRequest : {} {}\nSerde error : {}\nRequest : ",
+                    method,
+                    url,
+                    error
+                );
+
+                if request.is_empty() {
+                    result += "(empty)\n";
+                } else {
+                    result += &format!("\n{}\n---------\n", request);
+                }
+
+                let res = serde_json::from_str::<Value>(response)
+                    .and_then(|v| serde_json::to_string_pretty(&v));
+
+                let pretty_response = match res.as_ref() {
+                    Ok(json) => json,
+                    _ => response
+                };
+
+                result += &format!("Response :\n{}", pretty_response);
+            },
+            RemoteTokenError { token, error} => {
+                result += &format!(", error is '{}' and token was :\n{}", error, token)
+            },
+            ContentDecodingError { error } => {
+                result += &format!(", base64 dropped error '{}", error);
+            },
+            InvalidAudience { audience } => {
+                result += &format!(" : {}", audience);
+            },
+            InvalidNonce { nonce } => {
+                result += &format!(" : {}", nonce);
+            }
+        }
+
+        result
+    }
+}
+
+from_error!(reqwest::Error, MSError, MSError::HttpError);

@@ -27,10 +27,9 @@ use crate::db::DatabaseConnection;
 use crate::user::{User, microsoft};
 use crate::user::microsoft::MSError;
 
-use super::pdf;
-use super::DataError;
+use super::{pdf, DataResult, DataError};
 
-pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMResult>, DataError> {
+pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<QCMResult>> {
     let session = user.session.as_ref().ok_or(DataError::NotLogged)?;
     let mut history_result = db.single_query::<Vec<QCMHistory>>(
         r"
@@ -72,7 +71,12 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
     let mut qcms: HashMap<String, QCMResult> = HashMap::new();
 
     for mail in mails.iter() {
-        let naive_date = NaiveDate::parse_from_str(&mail.subject[28..38], "%d/%m/%Y")?;
+        let qcm_date = &mail.subject[28..38];
+        let naive_date = NaiveDate::parse_from_str(qcm_date, "%d/%m/%Y")
+            .map_err(|e| DataError::DateParsingError {
+                date: qcm_date.to_owned(),
+                error: e
+            })?;
         let date_key = format!("{}-{:02}-{:02}", naive_date.year(), naive_date.month(), naive_date.day());
 
         if history.qcms.iter().find(|s| {
@@ -178,7 +182,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMR
     Ok(new_qcms)
 }
 
-pub async fn get_next_qcm(db: &DatabaseConnection, user: &User) -> Result<Option<NextQCM>, DataError> {
+pub async fn get_next_qcm(db: &DatabaseConnection, user: &User) -> DataResult<Option<NextQCM>> {
     let mut result: Vec<NextQCM> = db.single_query(
         r"
             FOR next IN next_qcms
@@ -204,7 +208,7 @@ pub async fn get_next_qcm(db: &DatabaseConnection, user: &User) -> Result<Option
     })
 }
 
-pub async fn get_qcm_history(db: &DatabaseConnection, user: &User) -> Result<Vec<QCMResult>, DataError> {
+pub async fn get_qcm_history(db: &DatabaseConnection, user: &User) -> DataResult<Vec<QCMResult>> {
     Ok(db.single_query(
         r"
             FOR history IN qcm_histories

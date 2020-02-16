@@ -166,7 +166,7 @@ pub enum PDFError {
         error: lopdf::Error
     },
 
-    #[fail(display = "Malformed PDF : This is very bad, please contact the devs")]
+    #[fail(display = "Malformed PDF, unexcepted operand count or value type")]
     MalformedQCM
 }
 

@@ -29,9 +29,9 @@ use actix_web::{
 };
 
 use crate::db::DatabaseConnection;
-use crate::data::{get_data, refresh_user, handle_notification, DataError};
+use crate::data::{get_data, refresh_user, handle_notification, DataResult, DataError};
 use crate::user::User;
-use crate::user::microsoft::{MSResponse, Notification};
+use crate::user::microsoft::{MSValue, Notification};
 
 pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>) {
     cfg.service(
@@ -44,7 +44,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
 }
 
 #[get("/get")]
-pub async fn data_get(user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, DataError> {
+pub async fn data_get(user: User, db: web::Data<DatabaseConnection>) -> DataResult<HttpResponse> {
     Ok(HttpResponse::Ok().json(json!({
         "success": true,
         "data": get_data(db.as_ref(), &user).await?
@@ -52,7 +52,7 @@ pub async fn data_get(user: User, db: web::Data<DatabaseConnection>) -> Result<H
 }
 
 #[post("/refresh")]
-pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, DataError> {
+pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> DataResult<HttpResponse> {
     // TODO: Rate limit this
 
     refresh_user(db.as_ref(), &mut user).await?;
@@ -67,7 +67,7 @@ pub async fn notify(
     request: HttpRequest,
     db: web::Data<DatabaseConnection>,
     mut payload: web::Payload
-) -> Result<HttpResponse, DataError> {
+) -> DataResult<HttpResponse> {
     let query = request.query_string();
 
     if query.starts_with("validationToken=") {
@@ -83,7 +83,11 @@ pub async fn notify(
     }
 
     let body = std::str::from_utf8(&bytes)?;
-    let mut result: MSResponse<Vec<Notification>> = serde_json::from_str(body)?;
+    let mut result: MSValue<Vec<Notification>> = serde_json::from_str(body)
+        .map_err(|e| DataError::JsonParsingError {
+            payload: body.to_owned(),
+            error: e
+        })?;
 
     if result.value.len() > 0 {
         if let Err(e) = handle_notification(db.get_ref(), result.value.swap_remove(0)).await {
@@ -102,46 +106,16 @@ impl ResponseError for DataError {
         match self {
             NotLogged =>
                 StatusCode::FORBIDDEN,
-            MSError { error }=> {
-                error!("Microsoft error during request : {}", error);
+            PayloadDecodingError { .. } | JsonParsingError { .. } | InvalidClientState { .. } =>
+                StatusCode::BAD_REQUEST,
+            _ =>
                 StatusCode::INTERNAL_SERVER_ERROR
-            },
-            DatabaseError { error } => {
-                error!("Database error during request : {}", error);
-                StatusCode::INTERNAL_SERVER_ERROR
-            },
-            PDFError { error } => {
-                error!("PDF parsing error during request : {}", error);
-                StatusCode::INTERNAL_SERVER_ERROR
-            },
-            DateParsingError { error } => {
-                error!("Date parsing error during request : {}", error);
-                StatusCode::INTERNAL_SERVER_ERROR
-            },
-            PushNotifError { error } => {
-                error!("Push notification error during request : {}", error);
-                StatusCode::INTERNAL_SERVER_ERROR
-            },
-            PayloadReadingError { error } => {
-                error!("Payload reading error during request : {}", error);
-                StatusCode::INTERNAL_SERVER_ERROR
-            },
-            PayloadDecodingError { error } => {
-                error!("Payload UTF-8 decoding error during request : {}", error);
-                StatusCode::BAD_REQUEST
-            },
-            JsonParsingError { error } => {
-                error!("Payload JSON decoding error during request : {}", error);
-                StatusCode::BAD_REQUEST
-            },
-            InvalidClientState => {
-                error!("Notification with an invalid client state was received");
-                StatusCode::BAD_REQUEST
-            }
         }
     }
 
     fn error_response(&self) -> HttpResponse {
+        error!("A data error was dropped during a request : {}", self.to_detailed_string());
+
         HttpResponseBuilder::new(self.status_code()).json(json!({
             "success": false,
             "error": format!("{}", self)
