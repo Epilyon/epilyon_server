@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 use serde_json::json;
-use log::error;
+use log::{info, error};
 use futures::StreamExt;
 use percent_encoding::percent_decode_str;
 use actix_web::{
@@ -69,6 +69,10 @@ pub async fn notify(
     mut payload: web::Payload
 ) -> DataResult<HttpResponse> {
     let query = request.query_string();
+
+    if query.len() > 0 {
+        info!("Received /notify call with query '{}'", query);
+    }
 
     if query.starts_with("validationToken=") {
         let token = String::from(&query[16..]);
