@@ -26,6 +26,7 @@ use actix_web::{
 };
 
 use crate::db::DatabaseConnection;
+use crate::data::refresh_all;
 
 mod auth;
 mod data;
@@ -33,6 +34,7 @@ pub mod jwt;
 
 pub async fn start(address: &str, port: u16, db: DatabaseConnection) -> Result<(), HttpError> {
     let db_data = web::Data::new(db);
+    let db_clone = db_data.clone(); // For further use
 
     let address = format!("{}:{}", address, port);
     let server = HttpServer::new(move || {
@@ -49,6 +51,8 @@ pub async fn start(address: &str, port: u16, db: DatabaseConnection) -> Result<(
         .run();
 
     info!("Listening on http://{}...", address);
+
+    refresh_all(db_clone.get_ref()).await;
 
     server.await.map_err(|e| HttpError::ServerError { error: e })
 }

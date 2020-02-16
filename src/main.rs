@@ -69,8 +69,6 @@ async fn main() {
                 return;
             }
 
-            data::refresh_all(&db).await;
-
             RefreshActor {
                 db: db.clone()
             }.start();
