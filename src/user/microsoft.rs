@@ -136,7 +136,7 @@ pub async fn refresh(user: &MSUser) -> MSResult<MSUser> {
 
 pub async fn get_mails(user: &MSUser, filter: &str, count: usize) -> MSResult<Vec<Mail>> {
     let url = format!(
-        "/me/mailFolders/inbox/messages?\
+        "/me/messages?\
             $select=id,receivedDateTime,hasAttachments,subject,sender&\
             $orderby=receivedDateTime desc&\
             $filter={}&\
@@ -150,7 +150,7 @@ pub async fn get_mails(user: &MSUser, filter: &str, count: usize) -> MSResult<Ve
 
 pub async fn get_first_attachment(user: &MSUser, mail: &Mail, filter: &str) -> MSResult<Option<Attachment>> {
     let url = format!(
-        "/me/mailFolders/inbox/messages/{}/attachments?$filter={}",
+        "/me/messages/{}/attachments?$filter={}",
         &mail.id,
         filter
     );
