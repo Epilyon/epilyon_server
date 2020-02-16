@@ -132,6 +132,7 @@ fn setup_logger() -> Result<(), fern::InitError> {
     base
         .chain(file_log)
         .chain(stdout_log)
+        .level_for("lopdf", log::LevelFilter::Warn)
         .apply()?;
 
     Ok(())
