@@ -377,7 +377,7 @@ impl ResponseError for AuthError {
             ServiceError | ParsingError { .. } | MicrosoftError { .. } =>
                 StatusCode::INTERNAL_SERVER_ERROR,
             DatabaseError { error } => {
-                error!("Database error during auth request : {}", error);
+                error!("Database error during auth request : {}", error.to_detailed_string());
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         }
