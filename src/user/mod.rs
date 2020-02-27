@@ -26,6 +26,7 @@ use crate::config::CONFIG;
 
 pub mod cri;
 pub mod microsoft;
+pub mod admins;
 
 use cri::CRIUser;
 use microsoft::MSUser;
