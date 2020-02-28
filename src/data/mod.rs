@@ -117,7 +117,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
                 RETURN subscription
         ",
             json!({
-            "id": &user.id
+            "id": &user._key
         })
         ).await?;
 
@@ -128,8 +128,8 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
             ).await?;
 
             db.add("subscriptions", json!({
-                "user": &user.id,
-                "id": &subscription.id,
+                "_key": &subscription.id,
+                "user": &user._key,
                 "expires_at": &subscription.expirationDateTime
             })).await?;
 
@@ -144,7 +144,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
             if Utc::now() + Duration::hours(2) > subscription.expires_at {
                 let expires_at = microsoft::renew_subscription(
                     &session.ms_user,
-                    &subscription.id
+                    &subscription._key
                 ).await?;
 
                 subscription.expires_at = expires_at;
@@ -153,7 +153,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
 
                 info!(
                     "Renewed subscription '{}', now expiring at '{}'",
-                    subscription.id,
+                    subscription._key,
                     subscription.expires_at
                 );
             }
@@ -267,17 +267,17 @@ pub async fn remove_subscriptions_for(db: &DatabaseConnection, user: &User) -> D
                 RETURN subscription
         ",
         json!({
-            "id": &user.id
+            "id": &user._key
         })
     ).await?;
 
     let session = user.session.as_ref().ok_or(DataError::NotLogged)?;
 
     for subscription in subscriptions {
-        microsoft::unsubscribe(&session.ms_user, &subscription.id).await?;
+        microsoft::unsubscribe(&session.ms_user, &subscription._key).await?;
         db.remove("subscriptions", &subscription._key).await?;
 
-        info!("Removing subscription '{}'", subscription.id);
+        info!("Removing subscription '{}'", subscription._key);
     }
 
     Ok(())

@@ -40,7 +40,6 @@ pub struct MSUser {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MSSubscription {
     pub _key: String,
-    pub id: String,
     pub expires_at: DateTime<Utc>
 }
 

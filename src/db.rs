@@ -74,8 +74,10 @@ pub async fn open(
 
     if !conn.does_collection_exist("users").await? {
         info!("First launch, setting up database...");
+    }
 
-        for col in vec!["users", "next_qcms", "qcm_histories", "mimos", "options"] {
+    for col in vec!["users", "next_qcms", "qcm_histories", "mimos", "options", "admins"] {
+        if !conn.does_collection_exist(col).await? {
             info!("  - Creating table '{}'", col);
             conn.add_collection(col).await?;
         }
@@ -210,7 +212,7 @@ async fn request(
 ) -> DBResult<Value> {
     use DatabaseError::*;
 
-    let mut builder = http.request(method, url);
+    let mut builder = http.request(method.clone(), url);
 
     if let Some(tok) = token {
         builder = builder.header("Authorization", format!("Bearer {}", tok));
@@ -235,9 +237,11 @@ async fn request(
         return Err(match value["code"].as_i64().unwrap_or_else(|| 500) {
             401 => Unauthorized,
             404 => NotFound {
+                uri: method.to_string() + " " + url,
                 request
             },
             code => RemoteError {
+                uri: method.to_string() + " " + url,
                 request,
                 error: ArangoError {
                     code,
@@ -260,11 +264,13 @@ pub enum DatabaseError {
 
     #[fail(display="Can't find the requested element in the database")]
     NotFound {
+        uri: String,
         request: String
     },
 
     #[fail(display = "Database request failed with an unknown error")]
     RemoteError {
+        uri: String,
         request: String,
         error: ArangoError
     },
@@ -319,11 +325,16 @@ impl DatabaseError {
         result += &self.to_string();
 
         match self {
-            NotFound { request } => {
-                result += &format!(", request was :\n{}", request);
+            NotFound { uri, request } => {
+                result += &format!(
+                    ", this usually happens when the requested database or collection doesn't exist.\n\
+                    Request was on '{}' with body :\n{}",
+                    uri,
+                    request
+                );
             },
-            RemoteError { request, error } => {
-                result += &format!(", error is {} and request was :\n{}", error, request);
+            RemoteError { uri, request, error } => {
+                result += &format!(", error is {} and request was on '{}' with body :\n{}", error, uri, request);
             },
             SerializingError { error } => {
                 result += &format!(", serde dropped error : {}", error);
@@ -335,8 +346,8 @@ impl DatabaseError {
                 result += &format!(" : missing field '{}' from response :\n{}", missing, response);
             },
             HttpError { error } => {
-                result += &format!(", reqwuest dropped error '{}'", error);
-            }
+                result += &format!(", reqwest dropped error '{}'", error);
+            },
             _ => {}
         }
 

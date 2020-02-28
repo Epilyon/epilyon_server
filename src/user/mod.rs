@@ -31,10 +31,11 @@ pub mod admins;
 use cri::CRIUser;
 use microsoft::MSUser;
 
+pub(in self) type UserResult<T> = Result<T, UserError>;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct User {
     pub _key: String,
-    pub id: u32,
 
     pub cri_user: cri::CRIUser,
     pub groups: Vec<u8>, // Group IDs
@@ -50,7 +51,7 @@ pub struct UserSession {
     pub device_token: String
 }
 
-pub async fn update_users(db: &DatabaseConnection) -> Result<(), UserError> {
+pub async fn update_users(db: &DatabaseConnection) -> UserResult<()> {
     if let Ok(s) = std::env::var("EPILYON_DONT_FETCH_CRI") {
         if s == "true" {
             warn!("CRI isn't fetched due to EPILYON_DONT_FETCH_CRI being true, user list may not be up to date");
@@ -92,7 +93,7 @@ pub async fn update_users(db: &DatabaseConnection) -> Result<(), UserError> {
 
     for (id, user) in to_add {
         db.add("users", json!({
-            "id": *id,
+            "_key": (*id).to_string(),
 
             "cri_user": user.clone(),
             "groups": Vec::<String>::new(),
@@ -117,9 +118,38 @@ pub enum UserError {
         error: cri::CRIError
     },
 
-    #[fail(display = "Database request error : This is very bad, please contact the devs")]
+    #[fail(display = "Database request error : {}", error)]
     DatabaseError {
         error: DatabaseError
+    },
+
+    #[fail(display = "An entry is missing from the database")]
+    MissingEntry {
+        collection: String,
+        key: String
+    }
+}
+
+impl UserError {
+    pub fn to_detailed_string(&self) -> String {
+        use UserError::*;
+
+        let mut result = String::new();
+        result += &self.to_string();
+
+        match self {
+            CRIError { error } => {
+                result = format!("CRI request error : {}", error.to_detailed_string());
+            },
+            DatabaseError { error } => {
+                result = format!("Database request error : {}", error.to_detailed_string());
+            },
+            MissingEntry { collection, key } => {
+                result = format!(" : Collection '{}' is missing entry '{}'", collection, key);
+            }
+        }
+
+        result
     }
 }
 

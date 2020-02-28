@@ -42,13 +42,14 @@ pub async fn fetch_users(cri_url: &str, username: &str, password: &str, promos: 
         let res = http.get(&format!("{}/api/users/?limit=2000&promo={}", cri_url, promo))
             .header("Accept", "application/json")
             .basic_auth(username, Some(password))
-            .send().await
-            .map_err(|e| CRIError::HttpError { error: e })?
-            .json::<Value>().await
-            .map_err(|e| CRIError::ParsingError { error: e })?;
+            .send().await?
+            .text().await?;
 
-        let response: Vec<UserResponse> = serde_json::from_value(res["results"].clone())
-            .map_err(|e| CRIError::RemoteError { error: e, response: res.to_string() })?;
+        let json: Value = serde_json::from_str(&res)
+            .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
+
+        let response: Vec<UserResponse> = serde_json::from_value(json["results"].clone())
+            .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
 
         count += response.len();
 
@@ -119,19 +120,36 @@ struct UserResponse {
 
 #[derive(Debug, Fail)]
 pub enum CRIError {
-    #[fail(display = "Http request error : {}", error)]
+    #[fail(display = "HTTP error while requesting CRI")]
     HttpError {
         error: reqwest::Error
     },
 
-    #[fail(display = "JSON parsing error : {}", error)]
-    ParsingError {
-        error: reqwest::Error
-    },
-
-    #[fail(display = "CRI API threw an error or an unknown response type : '{}' for response '{}'", error, response)]
+    #[fail(display = "CRI API threw an error or an unknown response format")]
     RemoteError {
         error: serde_json::Error,
         response: String
     }
 }
+
+impl CRIError {
+    pub fn to_detailed_string(&self) -> String {
+        use CRIError::*;
+
+        let mut result = String::new();
+        result += &self.to_string();
+
+        match self {
+            HttpError { error } => {
+                result += &format!(", reqwest dropped error '{}'", error);
+            },
+            RemoteError { response, error } => {
+                result += &format!(". Serde dropped error '{}' while parsing response :\n{}", error, response);
+            },
+        }
+
+        result
+    }
+}
+
+from_error!(reqwest::Error, CRIError, CRIError::HttpError);

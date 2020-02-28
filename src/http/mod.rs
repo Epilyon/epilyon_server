@@ -30,6 +30,8 @@ use crate::data::refresh_all;
 
 mod auth;
 mod data;
+mod delegates;
+
 pub mod jwt;
 
 pub async fn start(address: &str, port: u16, db: DatabaseConnection) -> Result<(), HttpError> {
@@ -44,6 +46,9 @@ pub async fn start(address: &str, port: u16, db: DatabaseConnection) -> Result<(
                 auth::configure(c, db_data.clone())
             }))
             .service(web::scope("/data").configure(|c| {
+                data::configure(c, db_data.clone())
+            }))
+            .service(web::scope("/delegates").configure(|c| {
                 data::configure(c, db_data.clone())
             }))
     })

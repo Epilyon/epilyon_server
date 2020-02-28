@@ -39,7 +39,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
                 RETURN history
         ",
         json!({
-            "user": &user.id
+            "user": &user._key
         })
     ).await?;
 
