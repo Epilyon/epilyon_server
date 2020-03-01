@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 use serde::{Serialize, Deserialize};
-use serde_json::json;
 
 use super::{User, UserError, UserResult};
 use crate::db::DatabaseConnection;
@@ -26,11 +25,11 @@ pub async fn add_promo_infos(db: &DatabaseConnection, admin: &User) -> UserResul
         return Ok(())
     }
 
-    db.add("admins", json!({
-        "promo": &admin.cri_user.promo,
-        "admin": admin.id,
-        "delegates": Vec::<u32>::new()
-    })).await?;
+    db.add("admins", AdminInfo {
+        promo: admin.cri_user.promo.clone(),
+        admin: admin.id.clone(),
+        delegates: Vec::new()
+    }).await?;
 
     Ok(())
 }
@@ -40,25 +39,24 @@ pub async fn is_admin(db: &DatabaseConnection, user: &User) -> UserResult<bool> 
     Ok(infos.admin == user.id)
 }
 
-pub async fn get_delegates(db: &DatabaseConnection, promo: &str) -> UserResult<Vec<u32>> {
-    let infos = get_admin_infos(db, promo).await?;
-    Ok(infos.delegates)
+pub async fn get_delegates(db: &DatabaseConnection, promo: &str) -> UserResult<Vec<String>> {
+    Ok(get_admin_infos(db, promo).await?.delegates)
 }
 
 pub async fn set_delegate(db: &DatabaseConnection, user: &User) -> UserResult<()> {
     let mut infos = get_admin_infos(db, &user.cri_user.promo).await?;
-    infos.delegates.push(user.id);
+    infos.delegates.push(user.id.clone());
 
-    db.replace("admins", &infos._key.clone(), infos).await?;
+    db.replace("admins", &infos.promo.clone(), infos).await?;
 
     Ok(())
 }
 
 pub async fn unset_delegate(db: &DatabaseConnection, user: &User) -> UserResult<()> {
     let mut infos = get_admin_infos(db, &user.cri_user.promo).await?;
-    infos.delegates = infos.delegates.into_iter().filter(|&id| id != user.id).collect();
+    infos.delegates = infos.delegates.into_iter().filter(|id| *id != user.id).collect();
 
-    db.replace("admins", &infos._key.clone(), infos).await?;
+    db.replace("admins", &infos.promo.clone(), infos).await?;
 
     Ok(())
 }
@@ -75,31 +73,20 @@ pub async fn has_admin_infos(db: &DatabaseConnection, promo: &str) -> UserResult
 }
 
 async fn get_admin_infos(db: &DatabaseConnection, promo: &str) -> UserResult<AdminInfo> {
-    let mut result: Vec<AdminInfo> = db.single_query(
-        r"
-            FOR obj IN admins
-                FILTER obj.promo == @promo
-                RETURN obj
-        ",
-        json!({
-            "promo": promo
-        })
-    ).await?;
-
-    if result.len() == 0 {
+    if let Some(infos) = db.get("admins", promo).await? {
+        Ok(infos)
+    } else {
         Err(UserError::MissingEntry {
             collection: String::from("admins"),
             key: format!("? where 'promo' = '{}'", promo)
         })
-    } else {
-        Ok(result.swap_remove(0))
     }
 }
 
 #[derive(Serialize, Deserialize)]
 struct AdminInfo {
-    _key: String,
+    #[serde(rename = "_key")]
     promo: String,
-    admin: u32,
-    delegates: Vec<u32>
+    admin: String,
+    delegates: Vec<String>
 }

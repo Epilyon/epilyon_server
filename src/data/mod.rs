@@ -46,7 +46,7 @@ pub type DataResult<T> = Result<T, DataError>;
 const REFRESH_RATE: u64 = 2 * 24 * 60 * 60; // In seconds (= 2 days)
 
 lazy_static! {
-    static ref REFRESH_LOCKS: Mutex<HashMap<u32, Arc<Mutex<bool>>>> = Mutex::new(HashMap::new());
+    static ref REFRESH_LOCKS: Mutex<HashMap<String, Arc<Mutex<bool>>>> = Mutex::new(HashMap::new());
 }
 
 #[derive(Serialize)]
@@ -107,7 +107,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
         session.ms_user = microsoft::refresh(&session.ms_user).await?;
     }
 
-    db.update("users", &user._key, user_clone).await?;
+    db.update("users", &user.id, user_clone).await?;
 
     if std::env::var("EPILYON_DONT_SUBSCRIBE").is_err() {
         let mut subscriptions: Vec<MSSubscription> = db.single_query(
@@ -117,7 +117,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
                 RETURN subscription
         ",
             json!({
-            "id": &user._key
+            "id": &user.id
         })
         ).await?;
 
@@ -127,16 +127,16 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
                 "/me/messages?$filter=contains(subject, 'QCM')"
             ).await?;
 
-            db.add("subscriptions", json!({
-                "_key": &subscription.id,
-                "user": &user._key,
-                "expires_at": &subscription.expirationDateTime
-            })).await?;
+            db.add("subscriptions", MSSubscription {
+                id: subscription.id.clone(),
+                user: user.id.clone(),
+                expires_at: subscription.expires_at.clone()
+            }).await?;
 
             info!(
                 "Registered subscription '{}' expiring at '{}'",
                 subscription.id,
-                subscription.expirationDateTime
+                subscription.expires_at
             );
         } else {
             let mut subscription = subscriptions.swap_remove(0);
@@ -144,16 +144,16 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
             if Utc::now() + Duration::hours(2) > subscription.expires_at {
                 let expires_at = microsoft::renew_subscription(
                     &session.ms_user,
-                    &subscription._key
+                    &subscription.id
                 ).await?;
 
                 subscription.expires_at = expires_at;
 
-                db.replace("subscriptions", &subscription._key, subscription.clone()).await?;
+                db.replace("subscriptions", &subscription.id, subscription.clone()).await?;
 
                 info!(
                     "Renewed subscription '{}', now expiring at '{}'",
-                    subscription._key,
+                    subscription.id,
                     subscription.expires_at
                 );
             }
@@ -194,7 +194,7 @@ pub fn get_user_lock(user: &User) -> Arc<Mutex<bool>> {
     let mut locks = REFRESH_LOCKS.epilock();
 
     if !locks.contains_key(&user.id) {
-        locks.insert(user.id, Arc::new(Mutex::new(true)));
+        locks.insert(user.id.clone(), Arc::new(Mutex::new(true)));
     }
 
     locks.get(&user.id).unwrap().clone()
@@ -208,55 +208,46 @@ pub async fn get_data(db: &DatabaseConnection, user: &User) -> DataResult<UserDa
 }
 
 pub async fn handle_notification(db: &DatabaseConnection, notification: Notification) -> DataResult<()> {
-    if &notification.clientState != &CONFIG.ms_webhook_key {
+    if &notification.client_state != &CONFIG.ms_webhook_key {
         return Err(DataError::InvalidClientState {
             excepted: CONFIG.ms_webhook_key.clone(),
-            returned: notification.clientState.clone()
+            returned: notification.client_state.clone()
         });
     }
 
     // Multiple notifications are sent for each email received, but we must process only one
-    if &notification.changeType != "created" {
+    if &notification.change_type != "created" {
         return Ok(());
     }
 
-    info!("Received notification id '{}'", notification.subscriptionId);
+    info!("Received notification id '{}'", notification.id);
 
-    let mut result: Vec<User> = db.single_query(
-        r"
-            LET user_id = (
-                FOR subscription IN subscriptions
-                    FILTER subscription.id == @id
-                    RETURN subscription.user
-            )
+    let sub = db.get::<MSSubscription>("subscriptions", &notification.id).await?;
+    let user = match sub {
+        Some(s) => db.get::<User>("users", &s.user).await?,
+        None => None
+    };
 
-            FOR uid IN user_id
-                FOR user IN users
-                    FILTER user.id == uid
-                    FILTER user.session.expires_at > @time
-                    RETURN user
-        ",
-        json!({
-            "id": notification.subscriptionId,
-            "time": Utc::now().timestamp()
-        })
-    ).await?;
+    if let Some(mut u) = user {
+        if let Some(sess) = u.session.as_ref() {
+            if Utc::now() > sess.expires_at {
+                warn!("User session expired");
+            } else {
+                info!("Matching user is '{} {}'", u.cri_user.first_name, u.cri_user.last_name);
 
-    if result.len() > 0 {
-        let mut user = result.swap_remove(0);
-
-        info!("Matching user is '{} {}'", user.cri_user.first_name, user.cri_user.last_name);
-
-        if let Err(e) = refresh_user(db, &mut user).await {
-            error!("Failed refreshing after notification : {}", e.to_detailed_string());
+                if let Err(e) = refresh_user(db, &mut u).await {
+                    error!("Failed refreshing after notification : {}", e.to_detailed_string());
+                }
+            }
+        } else {
+            warn!("User is not logged");
         }
-
-        // We de not return an error to not panic MS APIs
-        Ok(())
     } else {
         warn!("No matching user");
-        Ok(())
     }
+
+    // We de not return an error to not panic MS APIs
+    Ok(())
 }
 
 pub async fn remove_subscriptions_for(db: &DatabaseConnection, user: &User) -> DataResult<()> {
@@ -267,17 +258,17 @@ pub async fn remove_subscriptions_for(db: &DatabaseConnection, user: &User) -> D
                 RETURN subscription
         ",
         json!({
-            "id": &user._key
+            "id": &user.id
         })
     ).await?;
 
     let session = user.session.as_ref().ok_or(DataError::NotLogged)?;
 
     for subscription in subscriptions {
-        microsoft::unsubscribe(&session.ms_user, &subscription._key).await?;
-        db.remove("subscriptions", &subscription._key).await?;
+        microsoft::unsubscribe(&session.ms_user, &subscription.id).await?;
+        db.remove("subscriptions", &subscription.id).await?;
 
-        info!("Removing subscription '{}'", subscription._key);
+        info!("Removing subscription '{}'", subscription.id);
     }
 
     Ok(())

@@ -49,7 +49,7 @@ pub async fn start(address: &str, port: u16, db: DatabaseConnection) -> Result<(
                 data::configure(c, db_data.clone())
             }))
             .service(web::scope("/delegates").configure(|c| {
-                data::configure(c, db_data.clone())
+                delegates::configure(c, db_data.clone())
             }))
     })
         .bind(&address).map_err(|e| HttpError::BindError { address: address.clone(), error: e })?

@@ -127,8 +127,7 @@ impl DatabaseConnection {
         Ok(res.try_get_string("_key")?)
     }
 
-    #[allow(dead_code)]
-    pub async fn get<T>(&self, collection: &str, key: &str) -> DBResult<T>
+    pub async fn get<T>(&self, collection: &str, key: &str) -> DBResult<Option<T>>
         where T: serde::de::DeserializeOwned
     {
         let mut result = self.request(
@@ -138,10 +137,21 @@ impl DatabaseConnection {
         ).await?;
 
         result["_id"] = Value::Null;
-        result["_key"] = Value::Null;
         result["_rev"] = Value::Null;
 
-        serde_json::from_value(result).map_err(DatabaseError::from)
+        let result = serde_json::from_value(result)
+            .map_err(DatabaseError::from);
+
+        match result {
+            Ok(doc) => Ok(Some(doc)),
+            Err(e) => {
+                if let DatabaseError::NotFound { .. } = e {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     pub async fn replace<T>(&self, collection: &str, key: &str, obj: T) -> DBResult<()>

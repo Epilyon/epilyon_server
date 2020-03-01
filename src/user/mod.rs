@@ -35,7 +35,8 @@ pub(in self) type UserResult<T> = Result<T, UserError>;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct User {
-    pub _key: String,
+    #[serde(rename = "_key")]
+    pub id: String,
 
     pub cri_user: cri::CRIUser,
     pub groups: Vec<u8>, // Group IDs
@@ -92,14 +93,13 @@ pub async fn update_users(db: &DatabaseConnection) -> UserResult<()> {
     let added = to_add.len();
 
     for (id, user) in to_add {
-        db.add("users", json!({
-            "_key": (*id).to_string(),
+        db.add("users", User {
+            id: (*id).to_string(),
 
-            "cri_user": user.clone(),
-            "groups": Vec::<String>::new(),
-
-            "session": Option::<UserSession>::None
-        })).await?;
+            cri_user: user.clone(),
+            groups: Vec::new(),
+            session: None
+        }).await?;
     }
 
     if added > 0 {
@@ -109,6 +109,25 @@ pub async fn update_users(db: &DatabaseConnection) -> UserResult<()> {
     }
 
     Ok(())
+}
+
+pub async fn get_user_by_email(db: &DatabaseConnection, email: &str) -> UserResult<Option<User>> {
+    let mut result: Vec<User> = db.single_query(
+        r"
+        FOR user IN users
+            FILTER user.email == @email
+            RETURN user
+        ",
+        json!({
+            "email": email
+        })
+    ).await?;
+
+    if result.len() == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(result.swap_remove(0)))
+    }
 }
 
 #[derive(Debug, Fail)]

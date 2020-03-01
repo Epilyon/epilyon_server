@@ -22,7 +22,6 @@ use log::info;
 use time::Duration;
 use chrono::{DateTime, Utc, NaiveDate, Datelike};
 use serde::{Serialize, Deserialize};
-use serde_json::json;
 
 use crate::db::DatabaseConnection;
 use crate::user::{User, microsoft};
@@ -32,30 +31,13 @@ use super::{pdf, DataResult, DataError};
 
 pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<QCMResult>> {
     let session = user.session.as_ref().ok_or(DataError::NotLogged)?;
-    let mut history_result = db.single_query::<Vec<QCMHistory>>(
-        r"
-            FOR history IN qcm_histories
-                FILTER history.user == @user
-                RETURN history
-        ",
-        json!({
-            "user": &user._key
-        })
-    ).await?;
-
-    let mut history = if history_result.len() > 0 {
-        history_result.swap_remove(0)
-    } else {
-        QCMHistory {
-            _key: "".into(),
-            user: user.id,
-            qcms: Vec::new()
-        }
+    let (mut history, is_new) = match db.get::<QCMHistory>("qcm_histories", &user.id).await? {
+        Some(h) => (h, false),
+        None => (QCMHistory { promo: user.id.clone(), qcms: Vec::new() }, true)
     };
 
     info!("Current QCM history has {} QCMs in it", history.qcms.len());
 
-    let should_notify = history.qcms.len() != 0; // If it is 0 it means it's the first launch/login
     history.qcms.sort_by(|a, b| a.date.cmp(&b.date).reverse());
 
     let mut starting_at = String::from("2019-10-01"); // Before that is the seminar
@@ -105,7 +87,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
             continue;
         }
 
-        let b64: Vec<u8> = base64::decode(&pdf.unwrap().contentBytes)
+        let b64: Vec<u8> = base64::decode(&pdf.unwrap().content_bytes)
             .map_err(|e| MSError::ContentDecodingError { error: e })?;
         let pts = pdf::parse_qcm(b64.as_slice())?;
 
@@ -175,67 +157,43 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
 
     let mut new_qcms: Vec<QCMResult> = Vec::new();
     for (_, v) in qcms {
-        if should_notify {
+        if is_new {
             new_qcms.push(v.clone());
         }
 
         history.qcms.push(v);
     }
 
-    if history._key.as_str() == "" {
-        db.add("qcm_histories", json!({
-            "user": history.user.clone(),
-            "qcms": history.qcms.clone()
-        })).await?;
+    if is_new {
+        db.add("qcm_histories", history).await?;
     } else {
-        db.replace("qcm_histories", &history._key, history.clone()).await?;
+        db.replace("qcm_histories", &history.promo, history.clone()).await?;
     }
 
     Ok(new_qcms)
 }
 
 pub async fn get_next_qcm(db: &DatabaseConnection, user: &User) -> DataResult<Option<NextQCM>> {
-    let mut result: Vec<NextQCM> = db.single_query(
-        r"
-            FOR next IN next_qcms
-                FILTER next.promo == @promo
-                RETURN next
-        ", json!({
-            "promo": &user.cri_user.promo
-        })
-    ).await?;
-
-    Ok(match result.len() {
-        0 => None,
-        _ => {
-            let next = result.swap_remove(0);
-
-            if Utc::now() + Duration::hours(2) > next.at {
-                db.remove("next_qcms", &next._key).await?;
-                None
-            } else {
-                Some(next)
-            }
+    if let Some(next) = db.get::<NextQCM>("next_qcms", &user.cri_user.promo).await? {
+        if Utc::now() + Duration::hours(2) > next.at {
+            db.remove("next_qcms", &next.promo).await?;
+            Ok(None)
+        } else {
+            Ok(Some(next))
         }
-    })
+    } else {
+        Ok(None)
+    }
 }
 
 pub async fn get_qcm_history(db: &DatabaseConnection, user: &User) -> DataResult<Vec<QCMResult>> {
-    Ok(db.single_query(
-        r"
-            FOR history IN qcm_histories
-                FILTER history.user == @user_id
-                FOR qcm IN history.qcms
-                    RETURN qcm
-        ", json!({
-            "user_id": &user.id
-        })
-    ).await?)
+    Ok(db.get("qcm_histories", &user.id).await?.unwrap_or(Vec::new()))
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct NextQCM {
-    _key: String,
+    #[serde(rename = "_key")]
+    promo: String,
     skipped: bool,
     at: DateTime<Utc>,
     revisions: Vec<Revision>
@@ -249,8 +207,8 @@ pub struct Revision {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct QCMHistory {
-    _key: String,
-    user: u32,
+    #[serde(rename = "_key")]
+    promo: String,
     qcms: Vec<QCMResult>
 }
 

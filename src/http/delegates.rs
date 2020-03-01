@@ -17,20 +17,20 @@
  */
 
 use serde::Deserialize;
-use serde_json::json;
-use log::{info, error};
+use serde_json::{json, Value};
+use log::{warn, error};
 use failure::Fail;
 use actix_web::{
     web,
     get, post, delete,
-    HttpRequest, HttpResponse,
+    HttpResponse,
     ResponseError,
     dev::HttpResponseBuilder,
     http::StatusCode
 };
 
-use crate::db::DatabaseConnection;
-use crate::user::{User, UserError};
+use crate::db::{DatabaseConnection, DatabaseError};
+use crate::user::{User, UserError, get_user_by_email};
 use crate::user::admins::{is_admin, get_delegates, set_delegate, unset_delegate};
 
 type DelegatesResult<T> = Result<T, DelegatesError>;
@@ -47,15 +47,29 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
 
 #[get("/")]
 pub async fn delegates(user: User, db: web::Data<DatabaseConnection>) -> DelegatesResult<HttpResponse> {
-    /*let ids = get_delegates(db.as_resf(), &user.cri_user.promo).await?;
-    let delegates =
+    let ids = get_delegates(db.as_ref(), &user.cri_user.promo).await?;
+    let mut result = Vec::<Value>::new();
+
+    for id in ids {
+        if let Some(user) = db.get::<User>("users", &id).await? {
+            result.push(json!({
+                "name": &format!("{} {}", user.cri_user.first_name, user.cri_user.last_name),
+                "email": user.cri_user.email.clone()
+            }));
+        } else {
+            warn!(
+                "An unknown user ID '{}' was registered as delegate \
+                for promo '{}' but does not exist, skipping",
+                id,
+                user.cri_user.promo
+            );
+        }
+    }
 
     Ok(HttpResponse::Ok().json(json!({
         "success": true,
-        "delegates": get_data(db.as_ref(), &user).await?
-    })))*/
-
-    unimplemented!()
+        "delegates": result
+    })))
 }
 
 #[post("/")]
@@ -64,7 +78,22 @@ pub async fn add_delegate(
     db: web::Data<DatabaseConnection>,
     data: web::Json<DelegateData>
 ) -> DelegatesResult<HttpResponse> {
-    unimplemented!()
+    if !is_admin(db.as_ref(), &user).await? {
+        return Err(DelegatesError::Unauthorized);
+    }
+
+    if let Some(user) = get_user_by_email(db.as_ref(), &data.email).await? {
+        set_delegate(db.as_ref(), &user).await?;
+
+        Ok(HttpResponse::Ok().json(json!({
+            "success": true,
+            "name": &format!("{} {}", user.cri_user.first_name, user.cri_user.last_name)
+        })))
+    } else {
+        Err(DelegatesError::UnknownUser {
+            email: data.email.clone()
+        })
+    }
 }
 
 #[delete("/")]
@@ -73,7 +102,24 @@ pub async fn remove_delegate(
     db: web::Data<DatabaseConnection>,
     data: web::Json<DelegateData>
 ) -> DelegatesResult<HttpResponse> {
-    unimplemented!()
+    if !is_admin(db.as_ref(), &user).await? {
+        return Err(DelegatesError::Unauthorized);
+    }
+
+    if let Some(user) = get_user_by_email(db.as_ref(), &data.email).await? {
+        unset_delegate(db.as_ref(), &user).await?;
+    } else {
+        warn!(
+            "An unknown user with email '{}' was asked to be removed \
+            from the delegates of promo '{}', skipping",
+            data.email,
+            user.cri_user.promo
+        );
+    }
+
+    Ok(HttpResponse::Ok().json(json!({
+        "success": true
+    })))
 }
 
 #[derive(Deserialize)]
@@ -83,12 +129,17 @@ pub struct DelegateData {
 
 #[derive(Debug, Fail)]
 pub enum DelegatesError {
-    #[fail(display = "Only the promo admin can do that")]
+    #[fail(display = "You don't have the required privileges to do that")]
     Unauthorized,
 
     #[fail(display = "Can't find any user with email '{}'", email)]
     UnknownUser {
         email: String
+    },
+
+    #[fail(display = "{}", error)]
+    DatabaseError {
+        error: DatabaseError
     },
 
     #[fail(display = "{}", error)]
@@ -104,13 +155,15 @@ impl ResponseError for DelegatesError {
         match self {
             Unauthorized => StatusCode::FORBIDDEN,
             UnknownUser { .. } => StatusCode::BAD_REQUEST,
-            UserError { .. } => StatusCode::INTERNAL_SERVER_ERROR
+            UserError { .. } | DatabaseError { .. } => StatusCode::INTERNAL_SERVER_ERROR
         }
     }
 
     fn error_response(&self) -> HttpResponse {
         if let DelegatesError::UserError { error } = self {
-            error!("User error dropped during delegates related request : {}", error.to_detailed_string());
+            error!("User error dropped during delegates request : {}", error.to_detailed_string());
+        } else if let DelegatesError::DatabaseError { error } = self {
+            error!("Database error dropped during delegates request : {}", error.to_detailed_string());
         }
 
         HttpResponseBuilder::new(self.status_code()).json(json!({
@@ -121,3 +174,4 @@ impl ResponseError for DelegatesError {
 }
 
 from_error!(UserError, DelegatesError, DelegatesError::UserError);
+from_error!(DatabaseError, DelegatesError, DelegatesError::DatabaseError);

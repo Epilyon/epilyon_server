@@ -67,7 +67,7 @@ pub struct AuthSession {
 
 #[derive(Clone)]
 pub struct AuthResult {
-    id: u32,
+    id: String,
     user: CRIUser,
     is_admin: bool
 }
@@ -148,7 +148,7 @@ pub async fn redirect(
         device_token: session.device_token.clone()
     });
 
-    db.replace("users", &user._key, user.clone()).await?;
+    db.replace("users", &user.id, user.clone()).await?;
 
     let mut is_admin = false;
     if !has_admin_infos(db.as_ref(), &user.cri_user.promo).await? {
@@ -222,7 +222,7 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
         s.expires_at = Utc::now() + Duration::milliseconds(USER_SESSION_DURATION);
     }
 
-    db.replace("users", &user._key, user.clone()).await?;
+    db.replace("users", &user.id, user.clone()).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "success": true,
@@ -243,7 +243,7 @@ pub async fn logout(mut user: User, db: web::Data<DatabaseConnection>) -> Result
         warn!("Ignoring");
     }
 
-    db.replace("users", &user._key, user.clone()).await?;
+    db.replace("users", &user.id, user.clone()).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "success": true
@@ -281,9 +281,7 @@ pub struct StartQuery {
 #[derive(Deserialize)]
 pub struct LoginResult {
     code: String,
-    state: String,
-    #[allow(dead_code)]
-    session_state: String // Needed for Actix to parse the response
+    state: String
 }
 
 impl FromRequest for AuthSession {

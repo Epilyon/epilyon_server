@@ -30,7 +30,12 @@ pub struct CRIUser {
     pub avatar: String
 }
 
-pub async fn fetch_users(cri_url: &str, username: &str, password: &str, promos: &Vec<String>) -> Result<Vec<(u32, CRIUser)>, CRIError> {
+pub async fn fetch_users(
+    cri_url: &str,
+    username: &str,
+    password: &str,
+    promos: &Vec<String>
+) -> Result<Vec<(u32, CRIUser)>, CRIError> {
     info!("Fetching users from CRI...");
 
     let http = reqwest::Client::new();
@@ -57,10 +62,10 @@ pub async fn fetch_users(cri_url: &str, username: &str, password: &str, promos: 
             match get_region(&u) {
                 Some(r) => {
                     if r == "lyon" {
-                        users.push((u.uidNumber as u32, CRIUser {
+                        users.push((u.uid_number as u32, CRIUser {
                             username: u.login.clone(),
-                            first_name: capitalize(&u.firstname),
-                            last_name: capitalize(&u.lastname),
+                            first_name: capitalize(&u.first_name),
+                            last_name: capitalize(&u.last_name),
                             email: u.mail.clone(),
                             promo: u.promo.clone(),
                             avatar: u.photo.clone()
@@ -68,7 +73,7 @@ pub async fn fetch_users(cri_url: &str, username: &str, password: &str, promos: 
                     }
                 },
                 None => {
-                    warn!("Unknown region for user '{} {}', skipping...", u.firstname, u.lastname);
+                    warn!("Unknown region for user '{} {}', skipping...", u.first_name, u.last_name);
                 }
             }
 
@@ -105,14 +110,16 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-#[allow(non_snake_case)] // This is from a JSON, we can't change that
 #[derive(Deserialize)]
 struct UserResponse {
     login: String,
-    uidNumber: usize,
+    #[serde(rename = "uidNumber")]
+    uid_number: usize,
     mail: String,
-    lastname: String,
-    firstname: String,
+    #[serde(rename = "lastname")]
+    last_name: String,
+    #[serde(rename = "firstname")]
+    first_name: String,
     promo: String,
     class_groups: Vec<String>,
     photo: String
