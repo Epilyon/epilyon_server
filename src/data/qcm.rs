@@ -187,7 +187,12 @@ pub async fn get_next_qcm(db: &DatabaseConnection, user: &User) -> DataResult<Op
 }
 
 pub async fn get_qcm_history(db: &DatabaseConnection, user: &User) -> DataResult<Vec<QCMResult>> {
-    Ok(db.get("qcm_histories", &user.id).await?.unwrap_or(Vec::new()))
+    let history: Option<QCMHistory> = db.get("qcm_histories", &user.id).await?;
+
+    Ok(match history {
+        Some(h) => h.qcms,
+        None => Vec::new()
+    })
 }
 
 #[derive(Serialize, Deserialize)]

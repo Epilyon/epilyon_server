@@ -130,20 +130,25 @@ impl DatabaseConnection {
     pub async fn get<T>(&self, collection: &str, key: &str) -> DBResult<Option<T>>
         where T: serde::de::DeserializeOwned
     {
-        let mut result = self.request(
+        let result = self.request(
             HttpMethod::GET,
             &format!("document/{}/{}", collection, key),
             None
-        ).await?;
-
-        result["_id"] = Value::Null;
-        result["_rev"] = Value::Null;
-
-        let result = serde_json::from_value(result)
-            .map_err(DatabaseError::from);
+        ).await;
 
         match result {
-            Ok(doc) => Ok(Some(doc)),
+            Ok(mut doc) => {
+                doc["_id"] = Value::Null;
+                doc["_rev"] = Value::Null;
+
+                Ok(Some(
+                    serde_json::from_value(doc.clone())
+                        .map_err(|e| DatabaseError::DeserializationError {
+                            error: e,
+                            value: doc.clone()
+                        })?
+                ))
+            },
             Err(e) => {
                 if let DatabaseError::NotFound { .. } = e {
                     Ok(None)
@@ -194,7 +199,13 @@ impl DatabaseConnection {
             }))
         ).await?;
 
-        Ok(serde_json::from_value(res["result"].clone())?)
+        Ok(
+            serde_json::from_value(res["result"].clone())
+                .map_err(|e| DatabaseError::DeserializationError {
+                    error: e,
+                    value: res["result"].clone()
+                })?
+        )
     }
 
     async fn request(
@@ -286,8 +297,14 @@ pub enum DatabaseError {
     },
 
     #[fail(display = "JSON serialization error")]
-    SerializingError {
+    SerializationError {
         error: serde_json::Error
+    },
+
+    #[fail(display = "JSON deserialization error")]
+    DeserializationError {
+        error: serde_json::Error,
+        value: serde_json::Value
     },
 
     #[fail(display = "JSON parsing error, database is probably down")]
@@ -346,9 +363,13 @@ impl DatabaseError {
             RemoteError { uri, request, error } => {
                 result += &format!(", error is {} and request was on '{}' with body :\n{}", error, uri, request);
             },
-            SerializingError { error } => {
+            SerializationError { error } => {
                 result += &format!(", serde dropped error : {}", error);
             },
+            DeserializationError { error, value} => {
+                let pretty = serde_json::to_string_pretty(value).unwrap_or(value.to_string());
+                result += &format!(", serde dropped error : {} while deserializing value :\n{}", error, pretty);
+            }
             ParsingError { response, error } => {
                 result += &format!(". Serde dropped error '{}' while parsing response :\n{}", error, response);
             },
@@ -366,4 +387,4 @@ impl DatabaseError {
 }
 
 from_error!(reqwest::Error, DatabaseError, DatabaseError::HttpError);
-from_error!(serde_json::Error, DatabaseError, DatabaseError::SerializingError);
+from_error!(serde_json::Error, DatabaseError, DatabaseError::SerializationError);

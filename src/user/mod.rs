@@ -115,7 +115,7 @@ pub async fn get_user_by_email(db: &DatabaseConnection, email: &str) -> UserResu
     let mut result: Vec<User> = db.single_query(
         r"
         FOR user IN users
-            FILTER user.email == @email
+            FILTER user.cri_user.email == @email
             RETURN user
         ",
         json!({

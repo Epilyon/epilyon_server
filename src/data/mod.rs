@@ -357,6 +357,9 @@ impl DataError {
         result += &self.to_string();
 
         match self {
+            DatabaseError { error } => {
+                result = error.to_detailed_string();
+            },
             MSError { error } => {
                 result = error.to_detailed_string();
             },

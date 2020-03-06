@@ -18,7 +18,7 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use log::{warn, error};
+use log::{info, warn, error};
 use failure::Fail;
 use actix_web::{
     web,
@@ -37,7 +37,7 @@ type DelegatesResult<T> = Result<T, DelegatesError>;
 
 pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>) {
     cfg.service(
-        web::scope("/")
+        web::scope("")
             .app_data(db)
             .service(delegates)
             .service(add_delegate)
@@ -45,7 +45,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
     );
 }
 
-#[get("/")]
+#[get("")]
 pub async fn delegates(user: User, db: web::Data<DatabaseConnection>) -> DelegatesResult<HttpResponse> {
     let ids = get_delegates(db.as_ref(), &user.cri_user.promo).await?;
     let mut result = Vec::<Value>::new();
@@ -72,7 +72,7 @@ pub async fn delegates(user: User, db: web::Data<DatabaseConnection>) -> Delegat
     })))
 }
 
-#[post("/")]
+#[post("")]
 pub async fn add_delegate(
     user: User,
     db: web::Data<DatabaseConnection>,
@@ -85,6 +85,13 @@ pub async fn add_delegate(
     if let Some(user) = get_user_by_email(db.as_ref(), &data.email).await? {
         set_delegate(db.as_ref(), &user).await?;
 
+        info!(
+            "User '{} {}' is now a delegate of promo '{}'",
+            user.cri_user.first_name,
+            user.cri_user.last_name,
+            user.cri_user.promo
+        );
+
         Ok(HttpResponse::Ok().json(json!({
             "success": true,
             "name": &format!("{} {}", user.cri_user.first_name, user.cri_user.last_name)
@@ -96,7 +103,7 @@ pub async fn add_delegate(
     }
 }
 
-#[delete("/")]
+#[delete("")]
 pub async fn remove_delegate(
     user: User,
     db: web::Data<DatabaseConnection>,
@@ -108,6 +115,13 @@ pub async fn remove_delegate(
 
     if let Some(user) = get_user_by_email(db.as_ref(), &data.email).await? {
         unset_delegate(db.as_ref(), &user).await?;
+
+        info!(
+            "User '{} {}' is not anymore a delegate of promo '{}'",
+            user.cri_user.first_name,
+            user.cri_user.last_name,
+            user.cri_user.promo
+        );
     } else {
         warn!(
             "An unknown user with email '{}' was asked to be removed \

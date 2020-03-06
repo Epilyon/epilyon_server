@@ -39,7 +39,7 @@ use actix_web::{
 
 use crate::sync::EpiLock;
 use crate::user::{microsoft, UserError, UserSession, User, cri::CRIUser};
-use crate::user::admins::{has_admin_infos, add_promo_infos, is_admin};
+use crate::user::admins::{has_admin_infos, add_promo_infos, is_admin, is_delegate};
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::data::remove_subscriptions_for;
 
@@ -69,7 +69,8 @@ pub struct AuthSession {
 pub struct AuthResult {
     id: String,
     user: CRIUser,
-    is_admin: bool
+    is_admin: bool,
+    is_delegate: bool
 }
 
 pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>) {
@@ -148,9 +149,9 @@ pub async fn redirect(
         device_token: session.device_token.clone()
     });
 
-    db.replace("users", &user.id, user.clone()).await?;
-
     let mut is_admin = false;
+    let mut is_del = false;
+
     if !has_admin_infos(db.as_ref(), &user.cri_user.promo).await? {
         add_promo_infos(db.as_ref(), &user).await?;
         is_admin = true;
@@ -161,12 +162,17 @@ pub async fn redirect(
             user.cri_user.last_name,
             user.cri_user.promo
         );
+    } else {
+        is_del = is_delegate(db.as_ref(), &user).await?;
     }
+
+    db.replace("users", &user.id, user.clone()).await?;
 
     session.result = Some(AuthResult {
         id: user.id.clone(),
         user: user.cri_user.clone(),
-        is_admin
+        is_admin,
+        is_delegate: is_del
     });
 
     info!(
@@ -188,7 +194,7 @@ pub async fn end(
     session: AuthSession
 ) -> Result<HttpResponse, AuthError> {
     match &session.result {
-        Some(AuthResult { id, user, is_admin}) => {
+        Some(AuthResult { id, user, is_admin, is_delegate}) => {
             let mut sessions = state.sessions.epilock();
             sessions.remove(&session.state);
 
@@ -203,11 +209,13 @@ pub async fn end(
                 })
             ).await?;
 
+
             Ok(HttpResponse::Ok().json(json!({
                 "success": true,
                 "user": user,
                 "first_time": first.len() == 0,
-                "admin": is_admin
+                "admin": is_admin,
+                "delegate": is_delegate
             })))
         },
         None => Err(AuthError::AuthCancelled)

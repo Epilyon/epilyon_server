@@ -39,6 +39,11 @@ pub async fn is_admin(db: &DatabaseConnection, user: &User) -> UserResult<bool> 
     Ok(infos.admin == user.id)
 }
 
+pub async fn is_delegate(db: &DatabaseConnection, user: &User) -> UserResult<bool> {
+    let infos = get_admin_infos(db, &user.cri_user.promo).await?;
+    Ok(infos.delegates.contains(&user.cri_user.promo))
+}
+
 pub async fn get_delegates(db: &DatabaseConnection, promo: &str) -> UserResult<Vec<String>> {
     Ok(get_admin_infos(db, promo).await?.delegates)
 }
