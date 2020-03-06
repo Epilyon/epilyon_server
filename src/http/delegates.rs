@@ -31,7 +31,7 @@ use actix_web::{
 
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::user::{User, UserError, get_user_by_email};
-use crate::user::admins::{is_admin, set_delegate, unset_delegate, is_delegate};
+use crate::user::admins::{is_admin, set_delegate, unset_delegate, is_privileged};
 use crate::data::DataError;
 
 type DelegatesResult<T> = Result<T, DelegatesError>;
@@ -116,7 +116,7 @@ pub async fn notify_all(
     db: web::Data<DatabaseConnection>,
     data: web::Json<NotifyData>
 ) -> DelegatesResult<HttpResponse> {
-    if !is_delegate(db.as_ref(), &user).await? {
+    if !is_privileged(db.as_ref(), &user).await? {
         return Err(DelegatesError::Unauthorized);
     }
 
