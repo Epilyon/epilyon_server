@@ -32,7 +32,7 @@ use crate::config::CONFIG;
 use crate::user::{User, microsoft, UserError};
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::user::microsoft::{MSError, Notification, MSSubscription};
-use crate::user::admins::{Delegate, get_delegates};
+use crate::user::admins::{Delegate, get_admin, get_delegates};
 use crate::sync::EpiLock;
 
 mod qcm;
@@ -52,9 +52,11 @@ lazy_static! {
 
 #[derive(Serialize)]
 pub struct UserData {
+    admin: Delegate,
+    delegates: Vec<Delegate>,
+
     next_qcm: Option<NextQCM>,
-    qcm_history: Vec<QCMResult>,
-    delegates: Vec<Delegate>
+    qcm_history: Vec<QCMResult>
 }
 
 pub async fn refresh_all(db: &DatabaseConnection) {
@@ -210,6 +212,7 @@ pub fn get_user_lock(user: &User) -> Arc<Mutex<bool>> {
 
 pub async fn get_data(db: &DatabaseConnection, user: &User) -> DataResult<UserData> {
     Ok(UserData {
+        admin: get_admin(db, &user.cri_user.promo).await?,
         next_qcm: qcm::get_next_qcm(db, user).await?,
         qcm_history: qcm::get_qcm_history(db, user).await?,
         delegates: get_delegates(db, &user.cri_user.promo).await?
@@ -278,6 +281,29 @@ pub async fn remove_subscriptions_for(db: &DatabaseConnection, user: &User) -> D
         db.remove("subscriptions", &subscription.id).await?;
 
         info!("Removing subscription '{}'", subscription.id);
+    }
+
+    Ok(())
+}
+
+pub async fn notify_all(db: &DatabaseConnection, caller: &User, message: &str) -> DataResult<()> {
+    let users: Vec<User> = db.single_query(
+        r"
+            FOR user IN users
+                FILTER user.cri_user.promo == @promo
+                RETURN user
+        ",
+        json!({
+            "promo": &caller.cri_user.promo
+        })
+    ).await?;
+
+    for user in users {
+        push_notif::notify(
+            &user,
+            &format!("Alerte de '{} {}'", caller.cri_user.first_name, caller.cri_user.last_name),
+            message
+        ).await?;
     }
 
     Ok(())

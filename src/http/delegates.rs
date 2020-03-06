@@ -31,7 +31,8 @@ use actix_web::{
 
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::user::{User, UserError, get_user_by_email};
-use crate::user::admins::{is_admin, set_delegate, unset_delegate};
+use crate::user::admins::{is_admin, set_delegate, unset_delegate, is_delegate};
+use crate::data::DataError;
 
 type DelegatesResult<T> = Result<T, DelegatesError>;
 
@@ -41,6 +42,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
             .app_data(db)
             .service(add_delegate)
             .service(remove_delegate)
+            .service(notify_all)
     );
 }
 
@@ -108,9 +110,31 @@ pub async fn remove_delegate(
     })))
 }
 
+#[post("/notify")]
+pub async fn notify_all(
+    user: User,
+    db: web::Data<DatabaseConnection>,
+    data: web::Json<NotifyData>
+) -> DelegatesResult<HttpResponse> {
+    if !is_delegate(db.as_ref(), &user).await? {
+        return Err(DelegatesError::Unauthorized);
+    }
+
+    crate::data::notify_all(db.as_ref(), &user, &data.content).await?;
+
+    Ok(HttpResponse::Ok().json(json!({
+        "success": true
+    })))
+}
+
 #[derive(Deserialize)]
 pub struct DelegateData {
     email: String
+}
+
+#[derive(Deserialize)]
+pub struct NotifyData {
+    content: String
 }
 
 #[derive(Debug, Fail)]
@@ -131,6 +155,11 @@ pub enum DelegatesError {
     #[fail(display = "{}", error)]
     UserError {
         error: UserError
+    },
+
+    #[fail(display = "{}", error)]
+    DataError {
+        error: DataError
     }
 }
 
@@ -141,7 +170,7 @@ impl ResponseError for DelegatesError {
         match self {
             Unauthorized => StatusCode::FORBIDDEN,
             UnknownUser { .. } => StatusCode::BAD_REQUEST,
-            UserError { .. } | DatabaseError { .. } => StatusCode::INTERNAL_SERVER_ERROR
+            UserError { .. } | DatabaseError { .. } | DataError { .. }=> StatusCode::INTERNAL_SERVER_ERROR
         }
     }
 
@@ -150,6 +179,8 @@ impl ResponseError for DelegatesError {
             error!("User error dropped during delegates request : {}", error.to_detailed_string());
         } else if let DelegatesError::DatabaseError { error } = self {
             error!("Database error dropped during delegates request : {}", error.to_detailed_string());
+        } else if let DelegatesError::DataError { error } = self {
+            error!("Data error dropped during delegates request : {}", error.to_detailed_string());
         }
 
         HttpResponseBuilder::new(self.status_code()).json(json!({
@@ -161,3 +192,4 @@ impl ResponseError for DelegatesError {
 
 from_error!(UserError, DelegatesError, DelegatesError::UserError);
 from_error!(DatabaseError, DelegatesError, DelegatesError::DatabaseError);
+from_error!(DataError, DelegatesError, DelegatesError::DataError);
