@@ -37,14 +37,14 @@ type DelegatesResult<T> = Result<T, DelegatesError>;
 
 pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>) {
     cfg.service(
-        web::scope("")
+        web::scope("/")
             .app_data(db)
             .service(add_delegate)
             .service(remove_delegate)
     );
 }
 
-#[post("")]
+#[post("/add")]
 pub async fn add_delegate(
     user: User,
     db: web::Data<DatabaseConnection>,
@@ -75,7 +75,7 @@ pub async fn add_delegate(
     }
 }
 
-#[delete("")]
+#[post("/remove")]
 pub async fn remove_delegate(
     user: User,
     db: web::Data<DatabaseConnection>,
