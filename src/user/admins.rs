@@ -16,6 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 use serde::{Serialize, Deserialize};
+use log::warn;
 
 use super::{User, UserError, UserResult};
 use crate::db::DatabaseConnection;
@@ -44,8 +45,27 @@ pub async fn is_delegate(db: &DatabaseConnection, user: &User) -> UserResult<boo
     Ok(infos.delegates.contains(&user.cri_user.promo))
 }
 
-pub async fn get_delegates(db: &DatabaseConnection, promo: &str) -> UserResult<Vec<String>> {
-    Ok(get_admin_infos(db, promo).await?.delegates)
+pub async fn get_delegates(db: &DatabaseConnection, promo: &str) -> UserResult<Vec<Delegate>> {
+    let ids = get_admin_infos(db, promo).await?.delegates;
+    let mut result = Vec::<Delegate>::new();
+
+    for id in ids {
+        if let Some(user) = db.get::<User>("users", &id).await? {
+            result.push(Delegate {
+                name: format!("{} {}", user.cri_user.first_name, user.cri_user.last_name),
+                email: user.cri_user.email.clone()
+            });
+        } else {
+            warn!(
+                "An unknown user ID '{}' was registered as delegate \
+                for promo '{}' but does not exist, skipping",
+                id,
+                promo
+            );
+        }
+    }
+
+    Ok(result)
 }
 
 pub async fn set_delegate(db: &DatabaseConnection, user: &User) -> UserResult<()> {
@@ -94,4 +114,10 @@ struct AdminInfo {
     promo: String,
     admin: String,
     delegates: Vec<String>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Delegate {
+    name: String,
+    email: String
 }

@@ -29,9 +29,10 @@ use failure::Fail;
 use lazy_static::lazy_static;
 
 use crate::config::CONFIG;
-use crate::user::{User, microsoft};
+use crate::user::{User, microsoft, UserError};
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::user::microsoft::{MSError, Notification, MSSubscription};
+use crate::user::admins::{Delegate, get_delegates};
 use crate::sync::EpiLock;
 
 mod qcm;
@@ -52,7 +53,8 @@ lazy_static! {
 #[derive(Serialize)]
 pub struct UserData {
     next_qcm: Option<NextQCM>,
-    history: Vec<QCMResult>
+    qcm_history: Vec<QCMResult>,
+    delegates: Vec<Delegate>
 }
 
 pub async fn refresh_all(db: &DatabaseConnection) {
@@ -70,7 +72,10 @@ pub async fn refresh_all(db: &DatabaseConnection) {
 
     match logged_users {
         Ok(users) => {
-            info!("Refreshing {} users...", users.len());
+            let user_count = users.len();
+            let time = time::now();
+
+            info!("Refreshing {} users...", user_count);
 
             for mut user in users {
                 if let Err(e) = refresh_user(&db, &mut user).await {
@@ -84,6 +89,9 @@ pub async fn refresh_all(db: &DatabaseConnection) {
                     error!("Skipping the refresh process for this user");
                 }
             }
+
+            let elapsed = (time::now() - time).num_milliseconds() as f32 / 1000.0;
+            info!("Successfully refreshed {} users in {} seconds", user_count, elapsed);
         },
         Err(e) => {
             error!("Database error while fetching logged users : {}", e.to_detailed_string());
@@ -203,7 +211,8 @@ pub fn get_user_lock(user: &User) -> Arc<Mutex<bool>> {
 pub async fn get_data(db: &DatabaseConnection, user: &User) -> DataResult<UserData> {
     Ok(UserData {
         next_qcm: qcm::get_next_qcm(db, user).await?,
-        history: qcm::get_qcm_history(db, user).await?
+        qcm_history: qcm::get_qcm_history(db, user).await?,
+        delegates: get_delegates(db, &user.cri_user.promo).await?
     })
 }
 
@@ -346,6 +355,11 @@ pub enum DataError {
     InvalidClientState {
         excepted: String,
         returned: String
+    },
+
+    #[fail(display = "{}", error)]
+    UserError {
+        error: UserError
     }
 }
 
@@ -380,7 +394,10 @@ impl DataError {
             },
             InvalidClientState { excepted, returned } => {
                 result += &format!(".\nExcepted : '{}'\nReceived : '{}'", excepted, returned);
-            }
+            },
+            UserError { error } => {
+                result = error.to_detailed_string()
+            },
             _ => {}
         }
 
@@ -391,5 +408,6 @@ impl DataError {
 from_error!(DatabaseError, DataError, DataError::DatabaseError);
 from_error!(MSError, DataError, DataError::MSError);
 from_error!(PDFError, DataError, DataError::PDFError);
+from_error!(UserError, DataError, DataError::UserError);
 from_error!(actix_http::error::PayloadError, DataError, DataError::PayloadReadingError);
 from_error!(std::str::Utf8Error, DataError, DataError::PayloadDecodingError);

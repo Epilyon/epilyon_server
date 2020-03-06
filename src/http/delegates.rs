@@ -17,12 +17,12 @@
  */
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
 use log::{info, warn, error};
 use failure::Fail;
 use actix_web::{
     web,
-    get, post, delete,
+    post, delete,
     HttpResponse,
     ResponseError,
     dev::HttpResponseBuilder,
@@ -31,7 +31,7 @@ use actix_web::{
 
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::user::{User, UserError, get_user_by_email};
-use crate::user::admins::{is_admin, get_delegates, set_delegate, unset_delegate};
+use crate::user::admins::{is_admin, set_delegate, unset_delegate};
 
 type DelegatesResult<T> = Result<T, DelegatesError>;
 
@@ -39,37 +39,9 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
     cfg.service(
         web::scope("")
             .app_data(db)
-            .service(delegates)
             .service(add_delegate)
             .service(remove_delegate)
     );
-}
-
-#[get("")]
-pub async fn delegates(user: User, db: web::Data<DatabaseConnection>) -> DelegatesResult<HttpResponse> {
-    let ids = get_delegates(db.as_ref(), &user.cri_user.promo).await?;
-    let mut result = Vec::<Value>::new();
-
-    for id in ids {
-        if let Some(user) = db.get::<User>("users", &id).await? {
-            result.push(json!({
-                "name": &format!("{} {}", user.cri_user.first_name, user.cri_user.last_name),
-                "email": user.cri_user.email.clone()
-            }));
-        } else {
-            warn!(
-                "An unknown user ID '{}' was registered as delegate \
-                for promo '{}' but does not exist, skipping",
-                id,
-                user.cri_user.promo
-            );
-        }
-    }
-
-    Ok(HttpResponse::Ok().json(json!({
-        "success": true,
-        "delegates": result
-    })))
 }
 
 #[post("")]

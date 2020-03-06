@@ -31,7 +31,7 @@ use super::{pdf, DataResult, DataError};
 
 pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<QCMResult>> {
     let session = user.session.as_ref().ok_or(DataError::NotLogged)?;
-    let (mut history, is_new) = match db.get::<QCMHistory>("qcm_histories", &user.id).await? {
+    let (mut history, is_first_fetch) = match db.get::<QCMHistory>("qcm_histories", &user.id).await? {
         Some(h) => (h, false),
         None => (QCMHistory { promo: user.id.clone(), qcms: Vec::new() }, true)
     };
@@ -157,14 +157,14 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
 
     let mut new_qcms: Vec<QCMResult> = Vec::new();
     for (_, v) in qcms {
-        if is_new {
+        if !is_first_fetch {
             new_qcms.push(v.clone());
         }
 
         history.qcms.push(v);
     }
 
-    if is_new {
+    if is_first_fetch {
         db.add("qcm_histories", history).await?;
     } else {
         db.replace("qcm_histories", &history.promo, history.clone()).await?;

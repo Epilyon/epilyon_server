@@ -236,7 +236,8 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
         "success": true,
         "token": new_token,
         "user": user.cri_user.clone(),
-        "admin": is_admin(db.as_ref(), &user).await?
+        "admin": is_admin(db.as_ref(), &user).await?,
+        "delegate": is_delegate(db.as_ref(), &user).await?
     })))
 }
 
