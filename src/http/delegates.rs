@@ -22,7 +22,7 @@ use log::{info, warn, error};
 use failure::Fail;
 use actix_web::{
     web,
-    post, delete,
+    post,
     HttpResponse,
     ResponseError,
     dev::HttpResponseBuilder,

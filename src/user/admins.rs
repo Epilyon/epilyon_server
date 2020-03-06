@@ -70,7 +70,9 @@ pub async fn get_delegates(db: &DatabaseConnection, promo: &str) -> UserResult<V
 
 pub async fn set_delegate(db: &DatabaseConnection, user: &User) -> UserResult<()> {
     let mut infos = get_admin_infos(db, &user.cri_user.promo).await?;
-    infos.delegates.push(user.id.clone());
+    if !infos.delegates.contains(&user.id) {
+        infos.delegates.push(user.id.clone());
+    }
 
     db.replace("admins", &infos.promo.clone(), infos).await?;
 
