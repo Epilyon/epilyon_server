@@ -42,6 +42,7 @@ mod push_notif;
 
 use pdf::PDFError;
 use qcm::{NextQCM, QCMResult};
+use mimos::Mimos;
 
 pub type DataResult<T> = Result<T, DataError>;
 
@@ -57,7 +58,8 @@ pub struct UserData {
     delegates: Vec<Delegate>,
 
     next_qcm: Option<NextQCM>,
-    qcm_history: Vec<QCMResult>
+    qcm_history: Vec<QCMResult>,
+    mimos: Vec<Mimos>
 }
 
 pub async fn refresh_all(db: &DatabaseConnection) {
@@ -214,9 +216,11 @@ pub fn get_user_lock(user: &User) -> Arc<Mutex<bool>> {
 pub async fn get_data(db: &DatabaseConnection, user: &User) -> DataResult<UserData> {
     Ok(UserData {
         admin: get_admin(db, &user.cri_user.promo).await?,
+        delegates: get_delegates(db, &user.cri_user.promo).await?,
+
         next_qcm: qcm::get_next_qcm(db, user).await?,
         qcm_history: qcm::get_qcm_history(db, user).await?,
-        delegates: get_delegates(db, &user.cri_user.promo).await?
+        mimos: mimos::get_mimos(db, user).await?
     })
 }
 

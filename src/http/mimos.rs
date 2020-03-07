@@ -17,8 +17,7 @@
  */
 use serde::Deserialize;
 use serde_json::json;
-use actix_web::{web, get, post, HttpResponse};
-use chrono::Utc;
+use actix_web::{web, post, HttpResponse};
 
 use crate::db::DatabaseConnection;
 use crate::user::User;
@@ -29,21 +28,9 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
     cfg.service(
         web::scope("/")
             .app_data(db)
-            .service(get_mimos)
             .service(add_mimos)
             .service(remove_mimos)
     );
-}
-
-#[get("/get")]
-pub async fn get_mimos(
-    user: User,
-    db: web::Data<DatabaseConnection>
-) -> DataResult<HttpResponse> {
-    Ok(HttpResponse::Ok().json(json!({
-        "success": true,
-        "mimos": mimos::get_mimos(db.as_ref(), &user).await?
-    })))
 }
 
 #[post("/add")]
