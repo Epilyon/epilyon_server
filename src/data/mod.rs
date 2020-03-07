@@ -301,6 +301,8 @@ pub async fn notify_all(db: &DatabaseConnection, caller: &User, message: &str) -
         })
     ).await?;
 
+    let user_count = users.len();
+
     for user in users {
         push_notif::notify(
             &user,
@@ -311,7 +313,7 @@ pub async fn notify_all(db: &DatabaseConnection, caller: &User, message: &str) -
 
     println!(
         "Sent global notification to '{}' users of promo '{}' with content : '{}'",
-        users.len(),
+        user_count,
         caller.cri_user.promo,
         message
     );
