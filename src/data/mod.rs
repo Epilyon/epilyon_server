@@ -291,10 +291,13 @@ pub async fn notify_all(db: &DatabaseConnection, caller: &User, message: &str) -
         r"
             FOR user IN users
                 FILTER user.cri_user.promo == @promo
+                FILTER user.session != null
+                FILTER user.session.expires_at > @time
                 RETURN user
         ",
         json!({
-            "promo": &caller.cri_user.promo
+            "promo": &caller.cri_user.promo,
+            "time": Utc::now().timestamp()
         })
     ).await?;
 
