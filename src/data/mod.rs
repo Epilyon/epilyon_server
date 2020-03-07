@@ -36,6 +36,7 @@ use crate::user::admins::{Delegate, get_admin, get_delegates};
 use crate::sync::EpiLock;
 
 mod qcm;
+pub mod mimos;
 mod pdf;
 mod push_notif;
 
@@ -311,8 +312,10 @@ pub async fn notify_all(db: &DatabaseConnection, caller: &User, message: &str) -
         ).await?;
     }
 
-    println!(
-        "Sent global notification to '{}' users of promo '{}' with content : '{}'",
+    info!(
+        "User '{} {}' sent global notification to '{}' users of promo '{}' with content : '{}'",
+        caller.cri_user.first_name,
+        caller.cri_user.last_name,
         user_count,
         caller.cri_user.promo,
         message
@@ -398,6 +401,19 @@ pub enum DataError {
     #[fail(display = "{}", error)]
     UserError {
         error: UserError
+    },
+
+    #[fail(display = "You don't have the required privileges to do that")]
+    Unauthorized,
+
+    #[fail(display = "Can't find any user with email '{}'", email)]
+    UnknownUser {
+        email: String
+    },
+
+    #[fail(display = "The given entry '{}' already exists in the database", entry)]
+    DuplicatedEntry {
+        entry: String
     }
 }
 

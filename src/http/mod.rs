@@ -31,6 +31,7 @@ use crate::data::refresh_all;
 mod auth;
 mod data;
 mod delegates;
+mod mimos;
 
 pub mod jwt;
 
@@ -50,6 +51,9 @@ pub async fn start(address: &str, port: u16, db: DatabaseConnection) -> Result<(
             }))
             .service(web::scope("/delegates").configure(|c| {
                 delegates::configure(c, db_data.clone())
+            }))
+            .service(web::scope("/mimos").configure(|c| {
+                mimos::configure(c, db_data.clone())
             }))
     })
         .bind(&address).map_err(|e| HttpError::BindError { address: address.clone(), error: e })?

@@ -18,23 +18,13 @@
 
 use serde::Deserialize;
 use serde_json::json;
-use log::{info, warn, error};
-use failure::Fail;
-use actix_web::{
-    web,
-    post,
-    HttpResponse,
-    ResponseError,
-    dev::HttpResponseBuilder,
-    http::StatusCode
-};
+use log::{info, warn};
+use actix_web::{web, post, HttpResponse};
 
-use crate::db::{DatabaseConnection, DatabaseError};
-use crate::user::{User, UserError, get_user_by_email};
+use crate::db::DatabaseConnection;
+use crate::user::{User, get_user_by_email};
 use crate::user::admins::{is_admin, set_delegate, unset_delegate, is_privileged};
-use crate::data::DataError;
-
-type DelegatesResult<T> = Result<T, DelegatesError>;
+use crate::data::{DataError, DataResult};
 
 pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>) {
     cfg.service(
@@ -51,9 +41,9 @@ pub async fn add_delegate(
     user: User,
     db: web::Data<DatabaseConnection>,
     data: web::Json<DelegateData>
-) -> DelegatesResult<HttpResponse> {
+) -> DataResult<HttpResponse> {
     if !is_admin(db.as_ref(), &user).await? {
-        return Err(DelegatesError::Unauthorized);
+        return Err(DataError::Unauthorized);
     }
 
     if let Some(user) = get_user_by_email(db.as_ref(), &data.email).await? {
@@ -71,7 +61,7 @@ pub async fn add_delegate(
             "name": &format!("{} {}", user.cri_user.first_name, user.cri_user.last_name)
         })))
     } else {
-        Err(DelegatesError::UnknownUser {
+        Err(DataError::UnknownUser {
             email: data.email.clone()
         })
     }
@@ -82,9 +72,9 @@ pub async fn remove_delegate(
     user: User,
     db: web::Data<DatabaseConnection>,
     data: web::Json<DelegateData>
-) -> DelegatesResult<HttpResponse> {
+) -> DataResult<HttpResponse> {
     if !is_admin(db.as_ref(), &user).await? {
-        return Err(DelegatesError::Unauthorized);
+        return Err(DataError::Unauthorized);
     }
 
     if let Some(user) = get_user_by_email(db.as_ref(), &data.email).await? {
@@ -115,9 +105,9 @@ pub async fn notify_all(
     user: User,
     db: web::Data<DatabaseConnection>,
     data: web::Json<NotifyData>
-) -> DelegatesResult<HttpResponse> {
+) -> DataResult<HttpResponse> {
     if !is_privileged(db.as_ref(), &user).await? {
-        return Err(DelegatesError::Unauthorized);
+        return Err(DataError::Unauthorized);
     }
 
     crate::data::notify_all(db.as_ref(), &user, &data.content).await?;
@@ -136,60 +126,3 @@ pub struct DelegateData {
 pub struct NotifyData {
     content: String
 }
-
-#[derive(Debug, Fail)]
-pub enum DelegatesError {
-    #[fail(display = "You don't have the required privileges to do that")]
-    Unauthorized,
-
-    #[fail(display = "Can't find any user with email '{}'", email)]
-    UnknownUser {
-        email: String
-    },
-
-    #[fail(display = "{}", error)]
-    DatabaseError {
-        error: DatabaseError
-    },
-
-    #[fail(display = "{}", error)]
-    UserError {
-        error: UserError
-    },
-
-    #[fail(display = "{}", error)]
-    DataError {
-        error: DataError
-    }
-}
-
-impl ResponseError for DelegatesError {
-    fn status_code(&self) -> StatusCode {
-        use DelegatesError::*;
-
-        match self {
-            Unauthorized => StatusCode::FORBIDDEN,
-            UnknownUser { .. } => StatusCode::BAD_REQUEST,
-            UserError { .. } | DatabaseError { .. } | DataError { .. }=> StatusCode::INTERNAL_SERVER_ERROR
-        }
-    }
-
-    fn error_response(&self) -> HttpResponse {
-        if let DelegatesError::UserError { error } = self {
-            error!("User error dropped during delegates request : {}", error.to_detailed_string());
-        } else if let DelegatesError::DatabaseError { error } = self {
-            error!("Database error dropped during delegates request : {}", error.to_detailed_string());
-        } else if let DelegatesError::DataError { error } = self {
-            error!("Data error dropped during delegates request : {}", error.to_detailed_string());
-        }
-
-        HttpResponseBuilder::new(self.status_code()).json(json!({
-            "success": false,
-            "error": format!("{}", self)
-        }))
-    }
-}
-
-from_error!(UserError, DelegatesError, DelegatesError::UserError);
-from_error!(DatabaseError, DelegatesError, DelegatesError::DatabaseError);
-from_error!(DataError, DelegatesError, DelegatesError::DataError);
