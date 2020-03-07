@@ -309,6 +309,13 @@ pub async fn notify_all(db: &DatabaseConnection, caller: &User, message: &str) -
         ).await?;
     }
 
+    println!(
+        "Sent global notification to '{}' users of promo '{}' with content : '{}'",
+        users.len(),
+        caller.cri_user.promo,
+        message
+    );
+
     Ok(())
 }
 
