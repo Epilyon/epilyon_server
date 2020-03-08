@@ -51,9 +51,6 @@ pub async fn add_mimos(db: &DatabaseConnection, user: &User, mimos: Mimos) -> Da
         });
     }
 
-    all.mimos.push(mimos);
-    db.replace("mimos", &all.promo.clone(), all).await?;
-
     info!(
         "User '{} {}' added new Mimos for subject '{}' : '{} - {}' for {}",
         user.cri_user.first_name,
@@ -63,6 +60,9 @@ pub async fn add_mimos(db: &DatabaseConnection, user: &User, mimos: Mimos) -> Da
         mimos.title,
         mimos.date.to_rfc2822()
     );
+
+    all.mimos.push(mimos);
+    db.replace("mimos", &all.promo.clone(), all).await?;
 
     Ok(())
 }
