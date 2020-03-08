@@ -356,7 +356,7 @@ pub enum DataError {
         error: DatabaseError
     },
 
-    #[fail(display = "You are not logged, your data can't be refreshed")]
+    #[fail(display = "You must be logged to do this")]
     NotLogged,
 
     #[fail(display = "Microsoft request failed : {}", error)]
