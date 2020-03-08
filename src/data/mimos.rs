@@ -15,6 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+use log::info;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 
@@ -53,6 +54,16 @@ pub async fn add_mimos(db: &DatabaseConnection, user: &User, mimos: Mimos) -> Da
     all.mimos.push(mimos);
     db.replace("mimos", &all.promo.clone(), all).await?;
 
+    info!(
+        "User '{} {}' added new Mimos for subject '{}' : '{} - {}' for {}",
+        user.cri_user.first_name,
+        user.cri_user.last_name,
+        mimos.subject,
+        mimos.number,
+        mimos.title,
+        mimos.date.to_rfc2822()
+    );
+
     Ok(())
 }
 
@@ -64,6 +75,14 @@ pub async fn remove_mimos(db: &DatabaseConnection, user: &User, number: u8, subj
         .collect();
 
     db.replace("mimos", &all.promo.clone(), all).await?;
+
+    info!(
+        "User '{} {}' removed Mimos number '{}' of subject '{}'",
+        user.cri_user.first_name,
+        user.cri_user.last_name,
+        number,
+        subject
+    );
 
     Ok(())
 }
