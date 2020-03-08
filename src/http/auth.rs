@@ -179,22 +179,17 @@ pub async fn end(
             let mut sessions = state.sessions.epilock();
             sessions.remove(&session.state);
 
-            let first = db.single_query::<Vec<bool>>(
-                r"
-                    FOR history IN qcm_histories
-                        FILTER history.user == @user
-                        return true
-                ",
+            let first: Vec<bool> = db.single_query(
+                r"RETURN DOCUMENT('qcm_histories', @user) == null",
                 json!({
                     "user": id
                 })
             ).await?;
 
-
             Ok(HttpResponse::Ok().json(json!({
                 "success": true,
                 "user": user,
-                "first_time": first.len() == 0
+                "first_time": first.get(0).unwrap_or(&true)
             })))
         },
         None => Err(AuthError::AuthCancelled)

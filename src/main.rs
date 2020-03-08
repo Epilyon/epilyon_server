@@ -48,7 +48,7 @@ async fn main() {
         return;
     }
 
-    info!("Starting Epilyon server v{}", VERSION);
+    info!("Epilyon server v{}", VERSION);
     info!("by Adrien 'Litarvan' Navratil");
     info!("---------------------------------------------------");
 
