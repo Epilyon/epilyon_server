@@ -74,8 +74,10 @@ pub async fn open(
 
     if !conn.does_collection_exist("users").await? {
         info!("First launch, setting up database...");
+    }
 
-        for col in vec!["users", "next_qcms", "qcm_histories", "mimos", "options"] {
+    for col in vec!["users", "next_qcms", "qcm_histories", "mimos", "options", "admins"] {
+        if !conn.does_collection_exist(col).await? {
             info!("  - Creating table '{}'", col);
             conn.add_collection(col).await?;
         }
@@ -125,21 +127,36 @@ impl DatabaseConnection {
         Ok(res.try_get_string("_key")?)
     }
 
-    #[allow(dead_code)]
-    pub async fn get<T>(&self, collection: &str, key: &str) -> DBResult<T>
+    pub async fn get<T>(&self, collection: &str, key: &str) -> DBResult<Option<T>>
         where T: serde::de::DeserializeOwned
     {
-        let mut result = self.request(
+        let result = self.request(
             HttpMethod::GET,
             &format!("document/{}/{}", collection, key),
             None
-        ).await?;
+        ).await;
 
-        result["_id"] = Value::Null;
-        result["_key"] = Value::Null;
-        result["_rev"] = Value::Null;
+        match result {
+            Ok(mut doc) => {
+                doc["_id"] = Value::Null;
+                doc["_rev"] = Value::Null;
 
-        serde_json::from_value(result).map_err(DatabaseError::from)
+                Ok(Some(
+                    serde_json::from_value(doc.clone())
+                        .map_err(|e| DatabaseError::DeserializationError {
+                            error: e,
+                            value: doc.clone()
+                        })?
+                ))
+            },
+            Err(e) => {
+                if let DatabaseError::NotFound { .. } = e {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     pub async fn replace<T>(&self, collection: &str, key: &str, obj: T) -> DBResult<()>
@@ -182,7 +199,13 @@ impl DatabaseConnection {
             }))
         ).await?;
 
-        Ok(serde_json::from_value(res["result"].clone())?)
+        Ok(
+            serde_json::from_value(res["result"].clone())
+                .map_err(|e| DatabaseError::DeserializationError {
+                    error: e,
+                    value: res["result"].clone()
+                })?
+        )
     }
 
     async fn request(
@@ -210,7 +233,7 @@ async fn request(
 ) -> DBResult<Value> {
     use DatabaseError::*;
 
-    let mut builder = http.request(method, url);
+    let mut builder = http.request(method.clone(), url);
 
     if let Some(tok) = token {
         builder = builder.header("Authorization", format!("Bearer {}", tok));
@@ -235,9 +258,11 @@ async fn request(
         return Err(match value["code"].as_i64().unwrap_or_else(|| 500) {
             401 => Unauthorized,
             404 => NotFound {
+                uri: method.to_string() + " " + url,
                 request
             },
             code => RemoteError {
+                uri: method.to_string() + " " + url,
                 request,
                 error: ArangoError {
                     code,
@@ -260,18 +285,26 @@ pub enum DatabaseError {
 
     #[fail(display="Can't find the requested element in the database")]
     NotFound {
+        uri: String,
         request: String
     },
 
     #[fail(display = "Database request failed with an unknown error")]
     RemoteError {
+        uri: String,
         request: String,
         error: ArangoError
     },
 
     #[fail(display = "JSON serialization error")]
-    SerializingError {
+    SerializationError {
         error: serde_json::Error
+    },
+
+    #[fail(display = "JSON deserialization error")]
+    DeserializationError {
+        error: serde_json::Error,
+        value: serde_json::Value
     },
 
     #[fail(display = "JSON parsing error, database is probably down")]
@@ -319,15 +352,24 @@ impl DatabaseError {
         result += &self.to_string();
 
         match self {
-            NotFound { request } => {
-                result += &format!(", request was :\n{}", request);
+            NotFound { uri, request } => {
+                result += &format!(
+                    ", this usually happens when the requested database or collection doesn't exist.\n\
+                    Request was on '{}' with body :\n{}",
+                    uri,
+                    request
+                );
             },
-            RemoteError { request, error } => {
-                result += &format!(", error is {} and request was :\n{}", error, request);
+            RemoteError { uri, request, error } => {
+                result += &format!(", error is {} and request was on '{}' with body :\n{}", error, uri, request);
             },
-            SerializingError { error } => {
+            SerializationError { error } => {
                 result += &format!(", serde dropped error : {}", error);
             },
+            DeserializationError { error, value} => {
+                let pretty = serde_json::to_string_pretty(value).unwrap_or(value.to_string());
+                result += &format!(", serde dropped error : {} while deserializing value :\n{}", error, pretty);
+            }
             ParsingError { response, error } => {
                 result += &format!(". Serde dropped error '{}' while parsing response :\n{}", error, response);
             },
@@ -335,8 +377,8 @@ impl DatabaseError {
                 result += &format!(" : missing field '{}' from response :\n{}", missing, response);
             },
             HttpError { error } => {
-                result += &format!(", reqwuest dropped error '{}'", error);
-            }
+                result += &format!(", reqwest dropped error '{}'", error);
+            },
             _ => {}
         }
 
@@ -345,4 +387,4 @@ impl DatabaseError {
 }
 
 from_error!(reqwest::Error, DatabaseError, DatabaseError::HttpError);
-from_error!(serde_json::Error, DatabaseError, DatabaseError::SerializingError);
+from_error!(serde_json::Error, DatabaseError, DatabaseError::SerializationError);

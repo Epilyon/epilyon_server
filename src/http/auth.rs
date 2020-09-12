@@ -38,7 +38,8 @@ use actix_web::{
 };
 
 use crate::sync::EpiLock;
-use crate::user::{microsoft, UserSession, User, cri::CRIUser};
+use crate::user::{microsoft, UserError, UserSession, User, cri::CRIUser};
+use crate::user::admins::{has_admin_infos, add_promo_infos};
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::data::remove_subscriptions_for;
 
@@ -61,7 +62,7 @@ pub struct AuthSession {
     nonce: String,
     device_token: String,
     expires_at: DateTime<Utc>,
-    result: Option<(u32, CRIUser)>,
+    result: Option<(String, CRIUser)>,
 }
 
 pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>) {
@@ -112,7 +113,7 @@ pub async fn redirect(
 )-> Result<HttpResponse, AuthError> {
     let mut sessions = state.sessions.epilock(); // So the lock lives for the whole function
     let session = sessions.get_session(&result.state)
-        .ok_or(AuthError::InvalidState)?;
+        .ok_or(AuthError::InvalidState { token: result.state.clone() })?;
 
     let (email, ms_user) = microsoft::identify(&result.code, &session.nonce).await?;
 
@@ -140,7 +141,19 @@ pub async fn redirect(
         device_token: session.device_token.clone()
     });
 
-    db.replace("users", &user._key, user.clone()).await?;
+    if !has_admin_infos(db.as_ref(), &user.cri_user.promo).await? {
+        add_promo_infos(db.as_ref(), &user).await?;
+
+        info!(
+            "'{} {}' is the first of the promo '{}' to log in, making them its administrator",
+            user.cri_user.first_name,
+            user.cri_user.last_name,
+            user.cri_user.promo
+        );
+    }
+
+    db.replace("users", &user.id, user.clone()).await?;
+
     session.result = Some((user.id.clone(), user.cri_user.clone()));
 
     info!(
@@ -156,18 +169,18 @@ pub async fn redirect(
 }
 
 #[post("/end")]
-pub async fn end(state: web::Data<AuthState>, db: web::Data<DatabaseConnection>, session: AuthSession) -> Result<HttpResponse, AuthError> {
+pub async fn end(
+    state: web::Data<AuthState>,
+    db: web::Data<DatabaseConnection>,
+    session: AuthSession
+) -> Result<HttpResponse, AuthError> {
     match &session.result {
         Some((id, user)) => {
             let mut sessions = state.sessions.epilock();
             sessions.remove(&session.state);
 
-            let first = db.single_query::<Vec<bool>>(
-                r"
-                    FOR history IN qcm_histories
-                        FILTER history.user == @user
-                        return true
-                ",
+            let first: Vec<bool> = db.single_query(
+                r"RETURN DOCUMENT('qcm_histories', @user) == null",
                 json!({
                     "user": id
                 })
@@ -176,7 +189,7 @@ pub async fn end(state: web::Data<AuthState>, db: web::Data<DatabaseConnection>,
             Ok(HttpResponse::Ok().json(json!({
                 "success": true,
                 "user": user,
-                "first_time": first.len() == 0
+                "first_time": first.get(0).unwrap_or(&true)
             })))
         },
         None => Err(AuthError::AuthCancelled)
@@ -191,7 +204,7 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
         s.expires_at = Utc::now() + Duration::milliseconds(USER_SESSION_DURATION);
     }
 
-    db.replace("users", &user._key, user.clone()).await?;
+    db.replace("users", &user.id, user.clone()).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "success": true,
@@ -202,16 +215,15 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
 
 #[post("/logout")]
 pub async fn logout(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, AuthError> {
-    user.session = None;
-
     info!("Logging out user '{} {}'", user.cri_user.first_name, user.cri_user.last_name);
-
     if let Err(e) = remove_subscriptions_for(db.get_ref(), &user).await {
-        warn!("Couldn't remove user subscriptions : {}", e);
+        warn!("Couldn't remove user subscriptions : {}", e.to_detailed_string());
         warn!("Ignoring");
     }
 
-    db.replace("users", &user._key, user.clone()).await?;
+    user.session = None;
+
+    db.replace("users", &user.id, user.clone()).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "success": true
@@ -225,7 +237,7 @@ fn gen_uuid() -> String {
 fn get_token(req: &HttpRequest) -> Result<String, AuthError> {
     Ok(String::from(req.headers().get("Token")
         .ok_or(AuthError::MissingToken)?
-        .to_str().map_err(|_| AuthError::InvalidToken)?))
+        .to_str().map_err(|_| AuthError::InvalidTokenFormat)?))
 }
 
 trait SessionContainer {
@@ -249,9 +261,7 @@ pub struct StartQuery {
 #[derive(Deserialize)]
 pub struct LoginResult {
     code: String,
-    state: String,
-    #[allow(dead_code)]
-    session_state: String // Needed for Actix to parse the response
+    state: String
 }
 
 impl FromRequest for AuthSession {
@@ -274,7 +284,9 @@ impl FromRequest for AuthSession {
         match get_session(req) {
             Ok(sess) => match sess {
                 Some(s) => ok(s.clone()),
-                None => err(AuthError::InvalidToken)
+                None => err(AuthError::InvalidToken {
+                    token: get_token(req).unwrap_or(String::from("(unknown token)"))
+                })
             },
             Err(e) => err(e)
         }
@@ -307,7 +319,7 @@ impl FromRequest for User {
             ).await?;
 
             if matches.len() == 0 {
-                Err(AuthError::InvalidToken)
+                Err(AuthError::InvalidToken { token: token.clone() })
             } else {
                 let user = matches.swap_remove(0);
 
@@ -315,7 +327,7 @@ impl FromRequest for User {
                     Some(s) => Utc::now() > s.expires_at,
                     None => true
                 } {
-                    Err(AuthError::InvalidToken)
+                    Err(AuthError::InvalidToken { token: token.clone() })
                 } else {
                     Ok(user)
                 }
@@ -329,18 +341,25 @@ impl FromRequest for User {
 #[derive(Debug, Fail)]
 pub enum AuthError {
     #[fail(display = "Invalid or expired token")]
-    InvalidToken,
+    InvalidToken {
+        token: String
+    },
 
-    #[fail(display = "Missing 'Token' header")]
+    #[fail(display = "Given token is not valid UTF-8")]
+    InvalidTokenFormat,
+
+    #[fail(display = "Missing 'Token' header in the request")]
     MissingToken,
 
-    #[fail(display = "App service misconfiguration, this is very bad : please contact the devs")]
+    #[fail(display = "Application service misconfiguration")]
     ServiceError,
 
-    #[fail(display = "Unknown state token")]
-    InvalidState,
+    #[fail(display = "Unknown state token received")]
+    InvalidState {
+        token: String
+    },
 
-    #[fail(display = "Microsoft API error : {}", error)]
+    #[fail(display = "Microsoft API remote error : {}", error)]
     MicrosoftError {
         error: microsoft::MSError
     },
@@ -351,18 +370,51 @@ pub enum AuthError {
         email: String
     },
 
-    #[fail(display = "Database connection error. This is very bad : please contact the devs")]
+    #[fail(display = "Database remote error : {}", error)]
     DatabaseError {
         error: DatabaseError
     },
 
-    #[fail(display = "JSON pasring error : {}. This is bad : please contact the devs", error)]
-    ParsingError {
-        error: serde_json::Error
+    #[fail(display = "{}", error)]
+    UserError {
+        error: UserError
     },
 
     #[fail(display = "Auth process was cancelled or not finished")]
     AuthCancelled
+}
+
+impl AuthError {
+    fn to_detailed_string(&self) -> String {
+        use AuthError::*;
+
+        let mut result = String::new();
+        result += &self.to_string();
+
+        match self {
+            InvalidToken { token } => {
+                result += &format!(" : '{}'.", token);
+            },
+            ServiceError => {
+                result += ". Couldn't retrieve 'AuthState' instance from the request.";
+            },
+            InvalidState { token } => {
+                result += &format!(" : '{}'.", token);
+            },
+            MicrosoftError { error } => {
+                result = format!("Microsoft API remote error : {}", error.to_detailed_string());
+            },
+            DatabaseError { error } => {
+                result = format!("Database remote error : {}", error.to_detailed_string());
+            },
+            UserError { error } => {
+                result = error.to_detailed_string();
+            },
+            _ => {}
+        }
+
+        result
+    }
 }
 
 impl ResponseError for AuthError {
@@ -370,20 +422,21 @@ impl ResponseError for AuthError {
         use AuthError::*;
 
         match self {
-            MissingToken =>
+            MissingToken | InvalidTokenFormat =>
                 StatusCode::BAD_REQUEST,
-            InvalidToken | InvalidState | AuthCancelled | UnknownUser { .. } =>
+            InvalidToken { .. } | InvalidState { .. } | AuthCancelled | UnknownUser { .. } =>
                 StatusCode::FORBIDDEN,
-            ServiceError | ParsingError { .. } | MicrosoftError { .. } =>
+            ServiceError | MicrosoftError { .. } | UserError { .. } =>
                 StatusCode::INTERNAL_SERVER_ERROR,
-            DatabaseError { error } => {
-                error!("Database error during auth request : {}", error.to_detailed_string());
+            DatabaseError { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         }
     }
 
     fn error_response(&self) -> HttpResponse {
+        error!("Auth error dropped during request : {}", self.to_detailed_string());
+
         HttpResponseBuilder::new(self.status_code()).json(json!({
             "success": false,
             "error": format!("{}", self)
@@ -392,5 +445,5 @@ impl ResponseError for AuthError {
 }
 
 from_error!(microsoft::MSError, AuthError, AuthError::MicrosoftError);
-from_error!(serde_json::Error, AuthError, AuthError::ParsingError);
 from_error!(DatabaseError, AuthError, AuthError::DatabaseError);
+from_error!(UserError, AuthError, AuthError::UserError);

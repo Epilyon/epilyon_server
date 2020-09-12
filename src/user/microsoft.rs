@@ -39,8 +39,10 @@ pub struct MSUser {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MSSubscription {
-    pub _key: String,
+    #[serde(rename = "_key")]
     pub id: String,
+    #[serde(default)]
+    pub user: String,
     pub expires_at: DateTime<Utc>
 }
 
@@ -310,8 +312,6 @@ struct IdTokenContent {
 
 #[derive(Deserialize)]
 struct RefreshResult {
-    #[allow(dead_code)]
-    expires_in: usize,
     access_token: String,
     refresh_token: String
 }
@@ -321,20 +321,21 @@ pub struct MSValue<T> {
     pub value: T
 }
 
-#[allow(non_snake_case)] // This is from a JSON, we can't change that
 #[derive(Deserialize)]
 pub struct Mail {
     pub id: String,
-    pub receivedDateTime: DateTime<Utc>,
-    pub hasAttachments: bool,
+    #[serde(rename = "receivedDateTime")]
+    pub received_at: DateTime<Utc>,
+    #[serde(rename = "hasAttachments")]
+    pub has_attachments: bool,
     pub subject: String,
     pub sender: MailSender
 }
 
-#[allow(non_snake_case)]
 #[derive(Deserialize)]
 pub struct MailSender {
-    pub emailAddress: MailAddress
+    #[serde(rename = "emailAddress")]
+    pub email_address: MailAddress
 }
 
 #[derive(Deserialize)]
@@ -343,27 +344,30 @@ pub struct MailAddress {
     pub address: String
 }
 
-#[allow(non_snake_case)] // This is from a JSON, we can't change that
 #[derive(Clone, Deserialize)]
 pub struct Attachment {
     pub name: String,
-    pub contentBytes: String
+    #[serde(rename = "contentBytes")]
+    pub content_bytes: String
 }
 
-#[allow(non_snake_case)] // This is from a JSON, we can't change that
 #[derive(Deserialize)]
 pub struct SubscriptionResponse {
     pub id: String,
-    pub expirationDateTime: DateTime<Utc>
+    #[serde(rename = "expirationDateTime")]
+    pub expires_at: DateTime<Utc>
 }
 
-#[allow(non_snake_case)] // This is from a JSON, we can't change that
 #[derive(Clone, Deserialize)]
 pub struct Notification {
-    pub subscriptionId: String,
-    pub subscriptionExpirationDateTime: DateTime<Utc>,
-    pub clientState: String,
-    pub changeType: String
+    #[serde(rename = "subscriptionId")]
+    pub id: String,
+    #[serde(rename = "subscriptionExpirationDateTime")]
+    pub expires_at: DateTime<Utc>,
+    #[serde(rename = "clientState")]
+    pub client_state: String,
+    #[serde(rename = "changeType")]
+    pub change_type: String
 }
 
 #[derive(Fail, Debug)]

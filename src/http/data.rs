@@ -108,9 +108,10 @@ impl ResponseError for DataError {
         use DataError::*;
 
         match self {
-            NotLogged =>
+            NotLogged | Unauthorized =>
                 StatusCode::FORBIDDEN,
-            PayloadDecodingError { .. } | JsonParsingError { .. } | InvalidClientState { .. } =>
+            PayloadDecodingError { .. } | JsonParsingError { .. } |
+            InvalidClientState { .. } | UnknownUser { .. } | DuplicatedEntry { .. } =>
                 StatusCode::BAD_REQUEST,
             _ =>
                 StatusCode::INTERNAL_SERVER_ERROR

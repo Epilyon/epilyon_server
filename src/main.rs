@@ -48,7 +48,7 @@ async fn main() {
         return;
     }
 
-    info!("Starting Epilyon server v{}", VERSION);
+    info!("Epilyon server v{}", VERSION);
     info!("by Adrien 'Litarvan' Navratil");
     info!("---------------------------------------------------");
 
@@ -64,7 +64,7 @@ async fn main() {
         Ok(db) => {
             if let Err(e) = cri_startup(&db).await {
                 error!("Error while loading users from the CRI");
-                error!("{}", e);
+                error!("{}", e.to_detailed_string());
 
                 return;
             }
@@ -157,6 +157,7 @@ async fn cri_startup(db: &DatabaseConnection) -> Result<(), UserError> {
                 }
             },
             // Prevents ownership errors
+            err @ UserError::MissingEntry { .. } => Err(err), // Can't happen
             err @ UserError::DatabaseError { .. } => Err(err)
         }
     } else {

@@ -30,7 +30,12 @@ pub struct CRIUser {
     pub avatar: String
 }
 
-pub async fn fetch_users(cri_url: &str, username: &str, password: &str, promos: &Vec<String>) -> Result<Vec<(u32, CRIUser)>, CRIError> {
+pub async fn fetch_users(
+    cri_url: &str,
+    username: &str,
+    password: &str,
+    promos: &Vec<String>
+) -> Result<Vec<(u32, CRIUser)>, CRIError> {
     info!("Fetching users from CRI...");
 
     let http = reqwest::Client::new();
@@ -42,13 +47,14 @@ pub async fn fetch_users(cri_url: &str, username: &str, password: &str, promos: 
         let res = http.get(&format!("{}/api/users/?limit=2000&promo={}", cri_url, promo))
             .header("Accept", "application/json")
             .basic_auth(username, Some(password))
-            .send().await
-            .map_err(|e| CRIError::HttpError { error: e })?
-            .json::<Value>().await
-            .map_err(|e| CRIError::ParsingError { error: e })?;
+            .send().await?
+            .text().await?;
 
-        let response: Vec<UserResponse> = serde_json::from_value(res["results"].clone())
-            .map_err(|e| CRIError::RemoteError { error: e, response: res.to_string() })?;
+        let json: Value = serde_json::from_str(&res)
+            .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
+
+        let response: Vec<UserResponse> = serde_json::from_value(json["results"].clone())
+            .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
 
         count += response.len();
 
@@ -56,10 +62,10 @@ pub async fn fetch_users(cri_url: &str, username: &str, password: &str, promos: 
             match get_region(&u) {
                 Some(r) => {
                     if r == "lyon" {
-                        users.push((u.uidNumber as u32, CRIUser {
+                        users.push((u.uid_number as u32, CRIUser {
                             username: u.login.clone(),
-                            first_name: capitalize(&u.firstname),
-                            last_name: capitalize(&u.lastname),
+                            first_name: capitalize(&u.first_name),
+                            last_name: capitalize(&u.last_name),
                             email: u.mail.clone(),
                             promo: u.promo.clone(),
                             avatar: u.photo.clone()
@@ -67,7 +73,7 @@ pub async fn fetch_users(cri_url: &str, username: &str, password: &str, promos: 
                     }
                 },
                 None => {
-                    warn!("Unknown region for user '{} {}', skipping...", u.firstname, u.lastname);
+                    warn!("Unknown region for user '{} {}', skipping...", u.first_name, u.last_name);
                 }
             }
 
@@ -104,14 +110,16 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-#[allow(non_snake_case)] // This is from a JSON, we can't change that
 #[derive(Deserialize)]
 struct UserResponse {
     login: String,
-    uidNumber: usize,
+    #[serde(rename = "uidNumber")]
+    uid_number: usize,
     mail: String,
-    lastname: String,
-    firstname: String,
+    #[serde(rename = "lastname")]
+    last_name: String,
+    #[serde(rename = "firstname")]
+    first_name: String,
     promo: String,
     class_groups: Vec<String>,
     photo: String
@@ -119,19 +127,36 @@ struct UserResponse {
 
 #[derive(Debug, Fail)]
 pub enum CRIError {
-    #[fail(display = "Http request error : {}", error)]
+    #[fail(display = "HTTP error while requesting CRI")]
     HttpError {
         error: reqwest::Error
     },
 
-    #[fail(display = "JSON parsing error : {}", error)]
-    ParsingError {
-        error: reqwest::Error
-    },
-
-    #[fail(display = "CRI API threw an error or an unknown response type : '{}' for response '{}'", error, response)]
+    #[fail(display = "CRI API threw an error or an unknown response format")]
     RemoteError {
         error: serde_json::Error,
         response: String
     }
 }
+
+impl CRIError {
+    pub fn to_detailed_string(&self) -> String {
+        use CRIError::*;
+
+        let mut result = String::new();
+        result += &self.to_string();
+
+        match self {
+            HttpError { error } => {
+                result += &format!(", reqwest dropped error '{}'", error);
+            },
+            RemoteError { response, error } => {
+                result += &format!(". Serde dropped error '{}' while parsing response :\n{}", error, response);
+            },
+        }
+
+        result
+    }
+}
+
+from_error!(reqwest::Error, CRIError, CRIError::HttpError);
