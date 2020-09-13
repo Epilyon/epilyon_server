@@ -81,7 +81,7 @@ pub async fn open(
         conn.create_database(database).await?;
     }
 
-    for col in vec!["users", "next_qcms", "qcm_histories", "mimos", "options", "admins"] {
+    for col in vec!["users", "next_qcms", "qcm_histories", "mimos", "options", "admins", "subscriptions"] {
         if !conn.does_collection_exist(col).await? {
             info!("  - Creating table '{}'", col);
             conn.add_collection(col).await?;
