@@ -17,25 +17,8 @@ COPY Cargo.lock .
 RUN cargo build
 
 
-# Reseting the image build with clean Debian
-FROM debian:buster-slim
-
-ENV USER epilyon
-ENV EPILYON_ROOT /var/run/epilyon
-
-# Installing openssl (required by openssl crate)
-RUN apt-get -q update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
-
-# Creating the runner user
-RUN addgroup --gid 1000 $USER && adduser -u 1000 --group $USER --system
-
-# Setting up runtime project files
-RUN mkdir -p $EPILYON_ROOT
-WORKDIR $EPILYON_ROOT
-
-RUN chown $USER:$USER $EPILYON_ROOT
-
-USER $USER
+# Reseting the image build with clean Distroless image
+FROM gcr.io/distroless/cc
 
 # Copying files from BUILDER step
 COPY --from=BUILDER /tmp/epilyon-build/target/debug/epilyon_server ./
