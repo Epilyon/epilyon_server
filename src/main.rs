@@ -39,11 +39,12 @@ use data::RefreshActor;
 
 #[actix_rt::main]
 async fn main() {
-    if std::env::var("EPILYON_LOG").is_err() {
-        std::env::set_var("EPILYON_LOG", "warn,epilyon_server=info");
-    }
+    let is_debug = match std::env::var("EPILYON_DEBUG") {
+        Ok(var) => var.to_lowercase() == "true",
+        Err(_) => false
+    };
 
-    if let Err(e) = setup_logger() {
+    if let Err(e) = setup_logger(is_debug) {
         eprintln!("Couldn't initialize logger : {}", e);
         return;
     }
@@ -84,14 +85,13 @@ async fn main() {
     }
 }
 
-fn setup_logger() -> Result<(), fern::InitError> {
+fn setup_logger(debug: bool) -> Result<(), fern::InitError> {
     let colors = ColoredLevelConfig::new()
         .info(Color::Green)
         .warn(Color::Yellow)
         .error(Color::Red);
 
-    let base = fern::Dispatch::new()
-        .level(log::LevelFilter::Info);
+    let base = fern::Dispatch::new();
 
     let stdout_log = fern::Dispatch::new()
         .format(move |out, message, record| {
@@ -129,11 +129,24 @@ fn setup_logger() -> Result<(), fern::InitError> {
         })
         .chain(fern::log_file("epilyon.log")?);
 
-    base
+    let mut base = base
         .chain(file_log)
-        .chain(stdout_log)
-        .level_for("lopdf", log::LevelFilter::Warn)
-        .apply()?;
+        .chain(stdout_log);
+
+    if debug {
+        base = base
+            .level(log::LevelFilter::Info)
+            .level_for("epilyon_server", log::LevelFilter::Trace)
+            .level_for("actix_server", log::LevelFilter::Debug);
+    } else {
+        base = base
+            .level(log::LevelFilter::Info)
+            .level_for("lopdf", log::LevelFilter::Warn)
+            .level_for("actix_server", log::LevelFilter::Warn)
+            .level_for("actix_web", log::LevelFilter::Warn);
+    }
+
+    base.apply()?;
 
     Ok(())
 }
