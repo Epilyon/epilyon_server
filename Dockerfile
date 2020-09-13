@@ -7,7 +7,7 @@ ENV BUILD_ROOT /tmp/epilyon-build
 WORKDIR $BUILD_ROOT
 
 # Installing openssl headers and pkg-config (required openssl-sys and backtrace-sys crates)
-RUN apt install openssl pkg-config
+RUN apt-get -q update && apt-get install -y libssl-dev pkg-config
 
 COPY src src/
 COPY Cargo.toml .
@@ -24,7 +24,7 @@ ENV USER epilyon
 ENV EPILYON_ROOT /var/run/epilyon
 
 # Installing openssl (required by openssl crate)
-RUN apt install openssl
+RUN apt-get -q update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 # Creating the runner user
 RUN addgroup --gid 1000 $USER && adduser -u 1000 --group $USER --system
