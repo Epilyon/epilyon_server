@@ -117,6 +117,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
     info!("Refreshing user '{} {}'", user_clone.cri_user.first_name, user_clone.cri_user.last_name);
 
     if Utc::now() - Duration::minutes(5) > session.ms_user.expires_at {
+        // TODO: Remove session on refresh token expiration (error_codes includes 700082)
         session.ms_user = microsoft::refresh(&session.ms_user).await?;
     }
 

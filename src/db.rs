@@ -76,6 +76,11 @@ pub async fn open(
         info!("First launch, setting up database...");
     }
 
+    if username == "root" && !conn.list_databases().await?.iter().any(|f| f == database) {
+        info!("  - Creating database '{}'", database);
+        conn.create_database(database).await?;
+    }
+
     for col in vec!["users", "next_qcms", "qcm_histories", "mimos", "options", "admins"] {
         if !conn.does_collection_exist(col).await? {
             info!("  - Creating table '{}'", col);
@@ -89,6 +94,32 @@ pub async fn open(
 }
 
 impl DatabaseConnection {
+    pub async fn create_database(&self, name: &str) -> DBResult<()> {
+        self.request(
+            HttpMethod::POST,
+            "/database",
+            Some(json!({
+                "name": name
+            }))
+        ).await.map(|_| ())
+    }
+
+    pub async fn list_databases(&self) -> DBResult<Vec<String>> {
+        let res = self.request(
+            HttpMethod::GET,
+            "/database",
+            None
+        ).await?;
+
+        Ok(
+            serde_json::from_value(res["result"].clone())
+                .map_err(|e| DatabaseError::DeserializationError {
+                    error: e,
+                    value: res["result"].clone()
+                })?
+        )
+    }
+
     pub async fn add_collection(&self, name: &str) -> DBResult<()> {
         self.request(
             HttpMethod::POST,
@@ -214,10 +245,16 @@ impl DatabaseConnection {
         path: &str,
         content: Option<Value>
     ) -> DBResult<Value> {
+        let path = if path.starts_with("/") {
+            format!("_api{}", path)
+        } else {
+            format!("_db/{}/_api/{}", self.database, path)
+        };
+
          request(
              &self.http,
              method,
-             &format!("http://{}:{}/_db/{}/_api/{}", self.host, self.port, self.database, path),
+             &format!("http://{}:{}/{}", self.host, self.port, path),
              content,
              Some(&self.token)
          ).await
