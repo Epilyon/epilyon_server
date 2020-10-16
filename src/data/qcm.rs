@@ -122,26 +122,27 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
             // TODO: More dynamic way
             if user.cri_user.promo == "2025" {
                 if is_first_part {
-                    qcm.grades.push(Grade { subject: "Algo.".into(),         points: f(0..10)  });
-                    qcm.grades.push(Grade { subject: "Mathématiques".into(), points: f(10..20) });
-                    qcm.grades.push(Grade { subject: "Anglais CIE".into(),   points: f(20..30) });
-                    qcm.grades.push(Grade { subject: "Anglais TIM".into(),   points: f(30..40) });
-                    qcm.grades.push(Grade { subject: "Physique".into(),      points: f(40..50) });
+                    // I insert those values at the top of the list to preserve the right order in
+                    // case the second part was fetched first
+                    qcm.grades.insert(0, Grade { subject: "Algo.".into(),         points: f(0..10)  });
+                    qcm.grades.insert(1, Grade { subject: "Mathématiques".into(), points: f(10..20) });
+                    qcm.grades.insert(2, Grade { subject: "Anglais CIE".into(),   points: f(20..30) });
+                    qcm.grades.insert(3, Grade { subject: "Anglais TIM".into(),   points: f(30..40) });
+                    qcm.grades.insert(4, Grade { subject: "Physique".into(),      points: f(40..50) });
                 } else {
-                    // I insert those values at the top of the list to preserve the right order
-                    qcm.grades.insert(0, Grade { subject: "Architecture".into(),  points: f(10..20) });
-                    qcm.grades.insert(0, Grade { subject: "Élec.".into(),         points: f(0..10)  });
+                    qcm.grades.push(Grade { subject: "Élec.".into(),         points: f(0..10)  });
+                    qcm.grades.push(Grade { subject: "Architecture".into(),  points: f(10..20) });
                 }
             } else {
                 if is_first_part {
-                    qcm.grades.push(Grade { subject: "Algo.".into(),         points: f(0..10)  });
-                    qcm.grades.push(Grade { subject: "Mathématiques".into(), points: f(10..20) });
-                    qcm.grades.push(Grade { subject: "Physique".into(),      points: f(20..30) });
-                    qcm.grades.push(Grade { subject: "Élec.".into(),         points: f(30..40)  });
-                    qcm.grades.push(Grade { subject: "Architecture".into(),  points: f(40..50) });
+                    qcm.grades.insert(0, Grade { subject: "Algo.".into(),         points: f(0..10)  });
+                    qcm.grades.insert(1, Grade { subject: "Mathématiques".into(), points: f(10..20) });
+                    qcm.grades.insert(2, Grade { subject: "Physique".into(),      points: f(20..30) });
+                    qcm.grades.insert(3, Grade { subject: "Élec.".into(),         points: f(30..40)  });
+                    qcm.grades.insert(4, Grade { subject: "Architecture".into(),  points: f(40..50) });
                 } else {
-                    qcm.grades.insert(0, Grade { subject: "Anglais".into(),  points: f(10..20) });
-                    qcm.grades.insert(0, Grade { subject: "O.C.".into(),  points: f(0..10) });
+                    qcm.grades.push(Grade { subject: "O.C.".into(),  points: f(0..10) });
+                    qcm.grades.push(Grade { subject: "Anglais".into(),  points: f(10..20) });
                 }
             }
 
