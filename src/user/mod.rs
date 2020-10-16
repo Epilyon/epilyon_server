@@ -62,9 +62,9 @@ pub async fn update_users(db: &DatabaseConnection) -> UserResult<()> {
 
     let users = cri::fetch_users(
         &CONFIG.cri_url,
+        &CONFIG.cri_photos_url,
         &CONFIG.cri_accessor_username,
-        &CONFIG.cri_accessor_password,
-        &CONFIG.cri_promos
+        &CONFIG.cri_accessor_password
     ).await.map_err(|e| UserError::CRIError { error: e })?;
 
     let all_users: Vec<&String> = users.iter()

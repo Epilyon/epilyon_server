@@ -32,62 +32,49 @@ pub struct CRIUser {
 
 pub async fn fetch_users(
     cri_url: &str,
+    cri_photos_url: &str,
     username: &str,
-    password: &str,
-    promos: &Vec<String>
+    password: &str
 ) -> Result<Vec<(u32, CRIUser)>, CRIError> {
     info!("Fetching users from CRI...");
 
     let http = reqwest::Client::new();
 
-    let res = http.get(&format!("{}/api/v2/groups/lyn/members/", cri_url))
+    let res = http.get(&format!("{}/api/v2/users/search/?groups=lyn", cri_url))
         .header("Accept", "application/json")
         .basic_auth(username, Some(password))
         .send().await?
         .text().await?;
 
-    let json: Value = serde_json::from_str(&res)
+    let value: Value = serde_json::from_str(&res)
         .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
-
-    let response: Vec<UserResponse> = serde_json::from_value(json["results"].clone())
+    let pretty: String = serde_json::to_string_pretty(&value)
         .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
+    let response: Vec<UserResponse> = serde_json::from_str(&pretty)
+        .map_err(|e| CRIError::RemoteError { error: e, response: pretty.clone() })?;
 
-    info!("Fetched {}' users from the CRI", response.len());
-
-    /*Ok(response.iter().map(|u| (u.uid_number as u32, CRIUser {
-
-    })).collect())*/
+    info!("Fetched '{}' users from the CRI", response.len());
 
     let mut users = Vec::<(u32, CRIUser)>::new();
 
     for u in response {
-        users.push((u.uid_number as u32, CRIUser {
-            username: u.login.clone(),
-            first_name: capitalize(&u.first_name),
-            last_name: capitalize(&u.last_name),
-            email: u.mail.clone(),
-            promo: u.promo.clone(),
-            avatar: u.photo.clone()
-        }));
-    }
+        let current_group = u.groups_history.iter().find(|g| g.is_current);
 
-    Ok(users)
-}
-
-fn get_region(user: &UserResponse) -> Option<String> {
-    let mut result = None;
-
-    for s in user.class_groups.iter() {
-        if s.starts_with(&user.promo) {
-            let split: Vec<&str> = s.split("_").collect();
-
-            if let Some(region) = split.get(2) {
-                result = Some(region.to_lowercase())
-            }
+        if let Some(group) = current_group {
+            users.push((u.uid as u32, CRIUser {
+                username: u.login.clone(),
+                first_name: capitalize(&u.first_name),
+                last_name: capitalize(&u.last_name),
+                email: u.email.clone(),
+                promo: group.graduation_year.to_string(),
+                avatar: format!("{}/{}", cri_photos_url, u.login)
+            }));
+        } else {
+            warn!("Can't find promo of user '{}' since they have no current group, skipping them", u.login);
         }
     }
 
-    result
+    Ok(users)
 }
 
 fn capitalize(s: &str) -> String {
@@ -102,16 +89,17 @@ fn capitalize(s: &str) -> String {
 #[derive(Deserialize)]
 struct UserResponse {
     login: String,
-    #[serde(rename = "uidNumber")]
-    uid_number: usize,
-    mail: String,
-    #[serde(rename = "lastname")]
-    last_name: String,
-    #[serde(rename = "firstname")]
+    uid: usize,
     first_name: String,
-    promo: String,
-    class_groups: Vec<String>,
-    photo: String
+    last_name: String,
+    email: String,
+    groups_history: Vec<UserGroup>
+}
+
+#[derive(Deserialize)]
+struct UserGroup {
+    graduation_year: u16,
+    is_current: bool
 }
 
 #[derive(Debug, Fail)]

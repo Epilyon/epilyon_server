@@ -39,9 +39,9 @@ pub struct EpiConfig {
     pub db_database: String,
 
     pub cri_url: String,
+    pub cri_photos_url: String,
     pub cri_accessor_username: String,
     pub cri_accessor_password: String,
-    pub cri_promos: Vec<String>,
 
     pub ms_tenant_url: String,
     pub ms_client_id: String,
@@ -65,10 +65,10 @@ fn default() -> EpiConfig {
         db_password: "".to_string(),
         db_database: "epilyon".to_string(),
 
-        cri_url: "https://cri.epita.fr".to_string(),
+        cri_url: "https://cri.url".to_string(),
+        cri_photos_url: "https://cri.photos.url".to_string(),
         cri_accessor_username: "firstname.lastname".to_string(),
         cri_accessor_password: "password".to_string(),
-        cri_promos: vec!["2024".to_string(), "2023".to_string()],
 
         ms_tenant_url: "https://login.microsoftonline.com/your_tenant_url".to_string(),
         ms_client_id: "your_client_id".to_string(),
