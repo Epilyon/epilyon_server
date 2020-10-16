@@ -40,7 +40,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
 
     history.qcms.sort_by(|a, b| a.date.cmp(&b.date).reverse());
 
-    let mut starting_at = String::from("2019-10-01"); // Before that is the seminar
+    let mut starting_at = String::from("2020-10-01"); // Before that is the seminar
     if let Some(qcm) = history.qcms.get(0) {
         let starting_date = qcm.date;
         starting_at = format!("{}-{:02}-{:02}", starting_date.year(), starting_date.month(), starting_date.day());

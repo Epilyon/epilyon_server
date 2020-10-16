@@ -40,47 +40,36 @@ pub async fn fetch_users(
 
     let http = reqwest::Client::new();
 
-    let mut users: Vec<(u32, CRIUser)> = Vec::new();
-    let mut count: usize = 0;
+    let res = http.get(&format!("{}/api/v2/groups/lyn/members/", cri_url))
+        .header("Accept", "application/json")
+        .basic_auth(username, Some(password))
+        .send().await?
+        .text().await?;
 
-    for promo in promos {
-        let res = http.get(&format!("{}/api/users/?limit=2000&promo={}", cri_url, promo))
-            .header("Accept", "application/json")
-            .basic_auth(username, Some(password))
-            .send().await?
-            .text().await?;
+    let json: Value = serde_json::from_str(&res)
+        .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
 
-        let json: Value = serde_json::from_str(&res)
-            .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
+    let response: Vec<UserResponse> = serde_json::from_value(json["results"].clone())
+        .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
 
-        let response: Vec<UserResponse> = serde_json::from_value(json["results"].clone())
-            .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
+    info!("Fetched {}' users from the CRI", response.len());
 
-        count += response.len();
+    /*Ok(response.iter().map(|u| (u.uid_number as u32, CRIUser {
 
-        for u in response {
-            match get_region(&u) {
-                Some(r) => {
-                    if r == "lyon" {
-                        users.push((u.uid_number as u32, CRIUser {
-                            username: u.login.clone(),
-                            first_name: capitalize(&u.first_name),
-                            last_name: capitalize(&u.last_name),
-                            email: u.mail.clone(),
-                            promo: u.promo.clone(),
-                            avatar: u.photo.clone()
-                        }));
-                    }
-                },
-                None => {
-                    warn!("Unknown region for user '{} {}', skipping...", u.first_name, u.last_name);
-                }
-            }
+    })).collect())*/
 
-        }
+    let mut users = Vec::<(u32, CRIUser)>::new();
+
+    for u in response {
+        users.push((u.uid_number as u32, CRIUser {
+            username: u.login.clone(),
+            first_name: capitalize(&u.first_name),
+            last_name: capitalize(&u.last_name),
+            email: u.mail.clone(),
+            promo: u.promo.clone(),
+            avatar: u.photo.clone()
+        }));
     }
-
-    info!("Filtered {} users from CRI out of {} fetched, from promos {:?}", users.len(), count, promos);
 
     Ok(users)
 }
