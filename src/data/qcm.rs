@@ -59,8 +59,8 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
 
     let mut qcms: HashMap<String, QCMResult> = HashMap::new();
     for mail in mails.iter() {
-        let to = mail.subject.len() - 14;
-        let qcm_date = String::from(&mail.subject[to - 6..to]) + "/2020";
+        let to = mail.subject.len() - 15;
+        let qcm_date = String::from(&mail.subject[to - 5..to]) + "/2020";
         let naive_date = NaiveDate::parse_from_str(&qcm_date, "%d/%m/%Y")
             .map_err(|e| DataError::DateParsingError {
                 date: qcm_date.to_owned(),
