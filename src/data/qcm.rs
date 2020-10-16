@@ -151,11 +151,13 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
                 let coef = match x.subject.as_str() {
                     "Algo." => 2.0,
                     "Mathématiques" => 3.0,
+                    "Anglais" => 3.0,
                     "Anglais CIE" => 1.5,
                     "Anglais TIM" => 1.5,
                     "Physique" => 2.0,
                     "Élec" => 2.0,
                     "Architecture" => 2.0,
+                    "O.C." => 1.0,
                     _ => 0.0
                 };
 
