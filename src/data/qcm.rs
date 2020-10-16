@@ -128,8 +128,9 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
                     qcm.grades.push(Grade { subject: "Anglais TIM".into(),   points: f(30..40) });
                     qcm.grades.push(Grade { subject: "Physique".into(),      points: f(40..50) });
                 } else {
-                    qcm.grades.push(Grade { subject: "Élec.".into(),         points: f(0..10)  });
-                    qcm.grades.push(Grade { subject: "Architecture".into(),  points: f(10..20) });
+                    // I insert those values at the top of the list to preserve the right order
+                    qcm.grades.insert(0, Grade { subject: "Architecture".into(),  points: f(10..20) });
+                    qcm.grades.insert(0, Grade { subject: "Élec.".into(),         points: f(0..10)  });
                 }
             } else {
                 if is_first_part {
@@ -139,8 +140,8 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
                     qcm.grades.push(Grade { subject: "Élec.".into(),         points: f(30..40)  });
                     qcm.grades.push(Grade { subject: "Architecture".into(),  points: f(40..50) });
                 } else {
-                    qcm.grades.push(Grade { subject: "O.C.".into(),  points: f(0..10) });
-                    qcm.grades.push(Grade { subject: "Anglais".into(),  points: f(10..20) });
+                    qcm.grades.insert(0, Grade { subject: "Anglais".into(),  points: f(10..20) });
+                    qcm.grades.insert(0, Grade { subject: "O.C.".into(),  points: f(0..10) });
                 }
             }
 
