@@ -102,7 +102,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
             result
         };
 
-        let is_first_part = !mail.subject.contains("Part 2");
+        let is_first_part = !mail.subject.contains("2ème partie");
 
         if !qcms.get(&date_key).is_some() {
             qcms.insert(date_key.clone(), QCMResult {
