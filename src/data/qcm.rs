@@ -119,30 +119,35 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
                 continue;
             }
 
-            // TODO: More dynamic way
-            if user.cri_user.promo == "2025" {
+            if user.cri_user.promo == "2024" && date_key == "12/10/2020" { // *clown emoji**
+                if is_first_part {
+                    qcm.grades.insert(0, Grade { subject: "Algo.".into(),         points: f(0..10)  });
+                    qcm.grades.insert(1, Grade { subject: "Mathématiques".into(), points: f(10..20) });
+                    qcm.grades.insert(2, Grade { subject: "Physique".into(),      points: f(20..30) });
+                    qcm.grades.insert(3, Grade { subject: "Électronique".into(),  points: f(30..40)  });
+                    qcm.grades.insert(4, Grade { subject: "Architecture".into(),  points: f(40..50) });
+                } else {
+                    qcm.grades.push(Grade { subject: "O.C.".into(),    points: f(0..10) });
+                    qcm.grades.push(Grade { subject: "Anglais".into(), points: f(10..20) });
+                }
+            } else {
+                let english = if user.cri_user.promo == "2025" {
+                    ["Anglais CIE", "Anglais TIM"]
+                } else {
+                    ["Anglais", "O.C."]
+                };
+
                 if is_first_part {
                     // I insert those values at the top of the list to preserve the right order in
                     // case the second part was fetched first
                     qcm.grades.insert(0, Grade { subject: "Algo.".into(),         points: f(0..10)  });
                     qcm.grades.insert(1, Grade { subject: "Mathématiques".into(), points: f(10..20) });
-                    qcm.grades.insert(2, Grade { subject: "Anglais CIE".into(),   points: f(20..30) });
-                    qcm.grades.insert(3, Grade { subject: "Anglais TIM".into(),   points: f(30..40) });
+                    qcm.grades.insert(2, Grade { subject: english[0].into(),      points: f(20..30) });
+                    qcm.grades.insert(3, Grade { subject: english[1].into(),      points: f(30..40) });
                     qcm.grades.insert(4, Grade { subject: "Physique".into(),      points: f(40..50) });
                 } else {
-                    qcm.grades.push(Grade { subject: "Élec.".into(),         points: f(0..10)  });
+                    qcm.grades.push(Grade { subject: "Électronique".into(),  points: f(0..10)  });
                     qcm.grades.push(Grade { subject: "Architecture".into(),  points: f(10..20) });
-                }
-            } else {
-                if is_first_part {
-                    qcm.grades.insert(0, Grade { subject: "Algo.".into(),         points: f(0..10)  });
-                    qcm.grades.insert(1, Grade { subject: "Mathématiques".into(), points: f(10..20) });
-                    qcm.grades.insert(2, Grade { subject: "Physique".into(),      points: f(20..30) });
-                    qcm.grades.insert(3, Grade { subject: "Élec.".into(),         points: f(30..40)  });
-                    qcm.grades.insert(4, Grade { subject: "Architecture".into(),  points: f(40..50) });
-                } else {
-                    qcm.grades.push(Grade { subject: "O.C.".into(),  points: f(0..10) });
-                    qcm.grades.push(Grade { subject: "Anglais".into(),  points: f(10..20) });
                 }
             }
 
@@ -157,7 +162,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
                     "Anglais CIE" => 1.5,
                     "Anglais TIM" => 1.5,
                     "Physique" => 2.0,
-                    "Élec" => 2.0,
+                    "Électronique" => 2.0,
                     "Architecture" => 2.0,
                     "O.C." => 1.0,
                     _ => 0.0
