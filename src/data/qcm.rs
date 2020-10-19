@@ -119,7 +119,7 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
                 continue;
             }
 
-            if user.cri_user.promo == "2024" && date_key == "12/10/2020" { // *clown emoji**
+            if user.cri_user.promo == "2024" && date_key == "2020-10-12" { // *clown emoji**
                 if is_first_part {
                     qcm.grades.insert(0, Grade { subject: "Algo.".into(),         points: f(0..10)  });
                     qcm.grades.insert(1, Grade { subject: "Mathématiques".into(), points: f(10..20) });
