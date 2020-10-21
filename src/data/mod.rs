@@ -370,7 +370,18 @@ pub enum DataError {
         error: PDFError
     },
 
-    #[fail(display = "Failed to parse a date")]
+    #[fail(display = "Invalid regex : {}", error)]
+    RegexError {
+        error: regex::Error
+    },
+
+    #[fail(display = "Invalid QCM subject '{}'", subject)]
+    InvalidSubjectError {
+        subject: String,
+        error: String
+    },
+
+    #[fail(display = "Failed to parse date '{}'", date)]
     DateParsingError {
         date: String,
         error: chrono::ParseError
@@ -436,8 +447,8 @@ impl DataError {
             MSError { error } => {
                 result = error.to_detailed_string();
             },
-            DateParsingError { date, error } => {
-                result += &format!(" ('{}'), chrono dropped error '{}'", date, error);
+            DateParsingError { error, .. } => {
+                result += &format!(", chrono dropped error '{}'", error);
             },
             PushNotifError { error } => {
                 result += &format!(", reqwest dropped error : '{}'", error);
@@ -470,3 +481,4 @@ from_error!(PDFError, DataError, DataError::PDFError);
 from_error!(UserError, DataError, DataError::UserError);
 from_error!(actix_http::error::PayloadError, DataError, DataError::PayloadReadingError);
 from_error!(std::str::Utf8Error, DataError, DataError::PayloadDecodingError);
+from_error!(regex::Error, DataError, DataError::RegexError);
