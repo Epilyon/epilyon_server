@@ -16,22 +16,22 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 use std::collections::HashMap;
-use std::ops::Range;
 
-use log::info;
+use log::{info, warn, error};
 use time::Duration;
 use chrono::{DateTime, Utc, NaiveDate, Datelike};
 use serde::{Serialize, Deserialize};
 
 use crate::db::DatabaseConnection;
 use crate::user::{User, microsoft};
-use crate::user::microsoft::MSError;
+use crate::user::microsoft::{MSError, Mail, MSUser};
 
 use super::{pdf, DataResult, DataError};
 
 pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<QCMResult>> {
     let session = user.session.as_ref().ok_or(DataError::NotLogged)?;
-    let (mut history, is_first_fetch) = match db.get::<QCMHistory>("qcm_histories", &user.id).await? {
+    let history_result = db.get::<QCMHistory>("qcm_histories", &user.id).await?;
+    let (mut history, is_first_fetch) = match history_result {
         Some(h) => (h, false),
         None => (QCMHistory { promo: user.id.clone(), qcms: Vec::new() }, true)
     };
@@ -43,7 +43,10 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
     let mut starting_at = String::from("2020-10-01"); // Before that is the seminar
     if let Some(qcm) = history.qcms.get(0) {
         let starting_date = qcm.date;
-        starting_at = format!("{}-{:02}-{:02}", starting_date.year(), starting_date.month(), starting_date.day());
+        starting_at = format!(
+            "{}-{:02}-{:02}",
+            starting_date.year(), starting_date.month(), starting_date.day()
+        );
     }
 
     info!("Fetching QCM mails since date '{}'", starting_at);
@@ -58,130 +61,32 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
     info!("Got {} mails", mails.len());
 
     let mut qcms: HashMap<String, QCMResult> = HashMap::new();
-    for mail in mails.iter() {
-        let date_regex = regex::Regex::new(r"\d?\d/\d\d")?;
-        let qcm_date = date_regex
-            .captures(&mail.subject)
-            .and_then(|c| c.get(0))
-            .map(|c| c.as_str().to_string())
-            .ok_or(DataError::InvalidSubjectError {
-                subject: mail.subject.clone(),
-                error: "No date was found".into()
-            })? + "/2020";
-        let naive_date = NaiveDate::parse_from_str(&qcm_date, "%d/%m/%Y")
-            .map_err(|e| DataError::DateParsingError {
-                date: qcm_date.to_owned(),
-                error: e
-            })?;
-        let date_key = format!("{}-{:02}-{:02}", naive_date.year(), naive_date.month(), naive_date.day());
-
-        if history.qcms.iter().find(|s| {
-            s.date == naive_date && s.grades.len() == 7
-        }).is_some() {
-            info!("QCM of date '{}' is already completed, skipping", date_key);
-            continue;
-        }
-
-        info!("Parsing mail '{}'", mail.subject);
-
-        let pdf = microsoft::get_first_attachment(
-            &session.ms_user,
-            &mail,
-            "contentType eq 'application/pdf' and name eq 'corrected.pdf'"
-        ).await?;
-
-        if pdf.is_none() {
-            continue;
-        }
-
-        let b64: Vec<u8> = base64::decode(&pdf.unwrap().content_bytes)
-            .map_err(|e| MSError::ContentDecodingError { error: e })?;
-        let pts = pdf::parse_qcm(b64.as_slice())?;
-
-        let f = |r: Range<u8>| {
-            let mut result: Vec<f32> = Vec::new();
-            for i in r {
-                if let Some(pt) = pts.get(i as usize) {
-                    result.push(*pt);
+    for mail in mails {
+        match get_date(&mail.subject) {
+            Ok((date_key, naive_date)) => {
+                if history.qcms.iter().find(|s| {
+                    s.date == naive_date && s.grades.len() == 7
+                }).is_some() {
+                    info!("QCM of date '{}' is already completed, skipping", date_key);
+                    continue;
                 }
-            }
 
-            result
-        };
+                let qcm = fetch_qcm(
+                    date_key, naive_date,
+                    user, &session.ms_user,
+                    &mail,
+                    &mut qcms
+                ).await;
 
-        let is_first_part = !mail.subject.contains("2ème partie");
-
-        if !qcms.get(&date_key).is_some() {
-            qcms.insert(date_key.clone(), QCMResult {
-                date: naive_date.clone(),
-                average: 0.0,
-                grades: Vec::new()
-            });
-        }
-
-        // Always true
-        if let Some(qcm) = qcms.get_mut(&date_key) {
-            if qcm.grades.len() == 7 {
-                qcms.remove(&date_key);
-                continue;
-            }
-
-            if user.cri_user.promo == "2024" && date_key == "2020-10-12" { // *clown emoji**
-                if is_first_part {
-                    qcm.grades.insert(0, Grade { subject: "Algo.".into(),         points: f(0..10)  });
-                    qcm.grades.insert(1, Grade { subject: "Mathématiques".into(), points: f(10..20) });
-                    qcm.grades.insert(2, Grade { subject: "Physique".into(),      points: f(20..30) });
-                    qcm.grades.insert(3, Grade { subject: "Électronique".into(),  points: f(30..40)  });
-                    qcm.grades.insert(4, Grade { subject: "Architecture".into(),  points: f(40..50) });
-                } else {
-                    qcm.grades.push(Grade { subject: "O.C.".into(),    points: f(0..10) });
-                    qcm.grades.push(Grade { subject: "Anglais".into(), points: f(10..20) });
+                if let Err(e) = qcm {
+                    error!("Failed to parse QCM from mail '{}' : {}", mail.subject, e.to_detailed_string());
+                    error!("Skipping this mail");
                 }
-            } else {
-                let english = if user.cri_user.promo == "2025" {
-                    ["Anglais CIE", "Anglais TIM"]
-                } else {
-                    ["Anglais", "O.C."]
-                };
-
-                if is_first_part {
-                    // I insert those values at the top of the list to preserve the right order in
-                    // case the second part was fetched first
-                    qcm.grades.insert(0, Grade { subject: "Algo.".into(),         points: f(0..10)  });
-                    qcm.grades.insert(1, Grade { subject: "Mathématiques".into(), points: f(10..20) });
-                    qcm.grades.insert(2, Grade { subject: english[0].into(),      points: f(20..30) });
-                    qcm.grades.insert(3, Grade { subject: english[1].into(),      points: f(30..40) });
-                    qcm.grades.insert(4, Grade { subject: "Physique".into(),      points: f(40..50) });
-                } else {
-                    qcm.grades.push(Grade { subject: "Électronique".into(),  points: f(0..10)  });
-                    qcm.grades.push(Grade { subject: "Architecture".into(),  points: f(10..20) });
-                }
+            },
+            Err(e) => {
+                error!("Failed to parse mail : {}", e.to_detailed_string());
+                error!("Skipping this mail");
             }
-
-            let mut total_n = 0.0;
-            let mut total_d = 0.0;
-            for x in qcm.grades.iter() {
-                let total: f32 = x.points.iter().sum();
-                let coef = match x.subject.as_str() {
-                    "Algo." => 2.0,
-                    "Mathématiques" => 3.0,
-                    "Anglais" => 3.0,
-                    "Anglais CIE" => 1.5,
-                    "Anglais TIM" => 1.5,
-                    "Physique" => 2.0,
-                    "Électronique" => 2.0,
-                    "Architecture" => 2.0,
-                    "O.C." => 1.0,
-                    _ => 0.0
-                };
-
-                total_n += total.max(0.0) * coef;
-                total_d += 10.0 * coef;
-            }
-
-            qcm.average = (total_n / total_d) * 20.0;
-
-            info!("QCM now has '{}' grades", qcm.grades.len());
         }
     }
 
@@ -201,6 +106,140 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
     }
 
     Ok(new_qcms)
+}
+
+fn get_date(subject: &String) -> DataResult<(String, NaiveDate)> {
+    let qcm_date = regex::Regex::new(r"\d?\d/\d\d")?
+        .captures(subject)
+        .and_then(|c| c.get(0))
+        .map(|c| c.as_str().to_string())
+        .ok_or(DataError::InvalidSubjectError {
+            subject: subject.clone(),
+            error: "No date was found".into()
+        })? + "/2020";
+
+    let naive_date = NaiveDate::parse_from_str(&qcm_date, "%d/%m/%Y")
+        .map_err(|e| DataError::DateParsingError {
+            date: qcm_date.to_owned(),
+            error: e
+        })?;
+
+    let date_key = format!(
+        "{}-{:02}-{:02}",
+        naive_date.year(), naive_date.month(), naive_date.day()
+    );
+
+    Ok((date_key, naive_date))
+}
+
+async fn fetch_qcm(
+    date_key: String,
+    date: NaiveDate,
+
+    user: &User,
+    ms_user: &MSUser,
+
+    mail: &Mail,
+
+    qcms: &mut HashMap<String, QCMResult>
+) -> DataResult<()> {
+    info!("Parsing mail '{}'", mail.subject);
+
+    let pdf = microsoft::get_first_attachment(
+        ms_user,
+        &mail,
+        "contentType eq 'application/pdf' and name eq 'corrected.pdf'"
+    ).await?;
+
+    if pdf.is_none() {
+        // TODO: Err
+        return Ok(());
+    }
+
+    let b64: Vec<u8> = base64::decode(&pdf.unwrap().content_bytes)
+        .map_err(|e| MSError::ContentDecodingError { error: e })?;
+    let pts = pdf::parse_qcm(b64.as_slice())?;
+    let is_first_part = !mail.subject.contains("2ème partie");
+
+    if !qcms.get(&date_key).is_some() {
+        qcms.insert(date_key.clone(), QCMResult {
+            date: date.clone(),
+            average: 0.0,
+            grades: Vec::new()
+        });
+    }
+
+    // Always true
+    if let Some(qcm) = qcms.get_mut(&date_key) {
+        if qcm.grades.len() == 7 {
+            qcms.remove(&date_key);
+            return Ok(());
+        }
+
+        let subjects = match user.cri_user.promo.as_str() {
+            // *clown emoji*
+            "2024" if date_key == "2020-10-12" => if is_first_part {
+                vec!["Algo.", "Mathématiques", "Physique", "Élec.", "Archi."]
+            } else {
+                vec!["O.C.", "Anglais"]
+            },
+
+            "2024" => if is_first_part {
+                vec!["Algo.", "Mathématiques", "Anglais", "O.C.", "Physique"]
+            } else {
+                vec!["Élec.", "Archi."]
+            },
+            "2025" => if is_first_part {
+                vec!["Algo.", "Mathématiques", "Anglais C.I.E.", "Anglais T.I.M.", "Physique"]
+            } else {
+                vec!["Élec.", "Archi."]
+            },
+
+            _ => vec![]
+        };
+
+        let shift = if is_first_part { 0 } else { 5 };
+        for (i, subject) in subjects.iter().enumerate() {
+            let mut points: Vec<f32> = Vec::new();
+            for k in i..i+10 {
+                if let Some(pt) = pts.get(k) {
+                    points.push(*pt);
+                }
+            }
+
+            qcm.grades.insert(shift + i, Grade { subject: subject.to_string(), points });
+        }
+
+        let mut total_n = 0.0;
+        let mut total_d = 0.0;
+        for x in qcm.grades.iter() {
+            let total: f32 = x.points.iter().sum();
+            let coef = match x.subject.as_str() {
+                "Algo." => 2.0,
+                "Mathématiques" => 3.0,
+                "Anglais" => 3.0,
+                "Anglais C.I.E." => 1.5,
+                "Anglais T.I.M." => 1.5,
+                "Physique" => 2.0,
+                "Élec." => 2.0,
+                "Archi." => 2.0,
+                "O.C." => 1.0,
+                _ => {
+                    warn!("Unknown subject '{}', assuming 1.0 coefficient", x.subject);
+                    1.0
+                }
+            };
+
+            total_n += total.max(0.0) * coef;
+            total_d += 10.0 * coef;
+        }
+
+        qcm.average = (total_n / total_d) * 20.0;
+
+        info!("QCM now has '{}' grades", qcm.grades.len());
+    }
+
+    Ok(())
 }
 
 pub async fn get_next_qcm(db: &DatabaseConnection, user: &User) -> DataResult<Option<NextQCM>> {

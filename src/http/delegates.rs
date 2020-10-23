@@ -24,7 +24,7 @@ use actix_web::{web, post, HttpResponse};
 use crate::db::DatabaseConnection;
 use crate::user::{User, get_user_by_email};
 use crate::user::admins::{is_admin, set_delegate, unset_delegate, is_privileged};
-use crate::data::{DataError, DataResult};
+use crate::data::{DataError, DataResult, push_notif};
 
 pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>) {
     cfg.service(
@@ -110,7 +110,7 @@ pub async fn notify_all(
         return Err(DataError::Unauthorized);
     }
 
-    crate::data::notify_all(db.as_ref(), &user, &data.content).await?;
+    push_notif::notify_all(db.as_ref(), &user, &data.content).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "success": true

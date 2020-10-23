@@ -41,7 +41,7 @@ use crate::sync::EpiLock;
 use crate::user::{microsoft, UserError, UserSession, User, cri::CRIUser};
 use crate::user::admins::{has_admin_infos, add_promo_infos};
 use crate::db::{DatabaseConnection, DatabaseError};
-use crate::data::remove_subscriptions_for;
+use crate::data::subscriptions;
 
 const AUTH_SESSION_DURATION: i64 = 10 * 60 * 1000; // Ten minutes
 const USER_SESSION_DURATION: i64 = 2 * 7 * 24 * 60 * 60 * 1000; // Two weeks
@@ -216,7 +216,7 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
 #[post("/logout")]
 pub async fn logout(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, AuthError> {
     info!("Logging out user '{} {}'", user.cri_user.first_name, user.cri_user.last_name);
-    if let Err(e) = remove_subscriptions_for(db.get_ref(), &user).await {
+    if let Err(e) = subscriptions::remove_for(db.get_ref(), &user).await {
         warn!("Couldn't remove user subscriptions : {}", e.to_detailed_string());
         warn!("Ignoring");
     }

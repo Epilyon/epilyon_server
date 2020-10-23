@@ -29,7 +29,8 @@ use actix_web::{
 };
 
 use crate::db::DatabaseConnection;
-use crate::data::{get_data, refresh_user, handle_notification, DataResult, DataError};
+use crate::data::{get_data, refresh_user, DataResult, DataError};
+use crate::data::subscriptions;
 use crate::user::User;
 use crate::user::microsoft::{MSValue, Notification};
 
@@ -94,7 +95,7 @@ pub async fn notify(
         })?;
 
     if result.value.len() > 0 {
-        if let Err(e) = handle_notification(db.get_ref(), result.value.swap_remove(0)).await {
+        if let Err(e) = subscriptions::handle_notification(db.get_ref(), result.value.swap_remove(0)).await {
             error!("Error while handling a notification : {}", e.to_detailed_string());
             error!("Skipping");
         }

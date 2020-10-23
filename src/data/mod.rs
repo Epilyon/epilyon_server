@@ -19,7 +19,7 @@ use std::time::Duration as StdDuration;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
-use log::{info, warn, error};
+use log::{info, error};
 use serde::Serialize;
 use serde_json::json;
 use time::Duration;
@@ -28,17 +28,17 @@ use actix::prelude::{Actor, Context, AsyncContext};
 use failure::Fail;
 use lazy_static::lazy_static;
 
-use crate::config::CONFIG;
 use crate::user::{User, microsoft, UserError};
 use crate::db::{DatabaseConnection, DatabaseError};
-use crate::user::microsoft::{MSError, Notification, MSSubscription};
+use crate::user::microsoft::MSError;
 use crate::user::admins::{Delegate, get_admin, get_delegates};
 use crate::sync::EpiLock;
 
 mod qcm;
 pub mod mimos;
 mod pdf;
-mod push_notif;
+pub mod push_notif;
+pub mod subscriptions;
 
 use pdf::PDFError;
 use qcm::{NextQCM, QCMResult};
@@ -121,57 +121,13 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
         session.ms_user = microsoft::refresh(&session.ms_user).await?;
     }
 
+    // We get an immutable reference to be able to share it
+    let session = user.session.as_ref().ok_or(DataError::NotLogged)?;
+
     db.update("users", &user.id, user_clone).await?;
 
     if std::env::var("EPILYON_DONT_SUBSCRIBE").is_err() {
-        let mut subscriptions: Vec<MSSubscription> = db.single_query(
-            r"
-            FOR subscription IN subscriptions
-                FILTER subscription.user == @id
-                RETURN subscription
-        ",
-            json!({
-            "id": &user.id
-        })
-        ).await?;
-
-        if subscriptions.len() == 0 {
-            let subscription = microsoft::subscribe(
-                &session.ms_user,
-                "/me/messages?$filter=contains(subject, 'QCM')"
-            ).await?;
-
-            db.add("subscriptions", MSSubscription {
-                id: subscription.id.clone(),
-                user: user.id.clone(),
-                expires_at: subscription.expires_at.clone()
-            }).await?;
-
-            info!(
-                "Registered subscription '{}' expiring at '{}'",
-                subscription.id,
-                subscription.expires_at
-            );
-        } else {
-            let mut subscription = subscriptions.swap_remove(0);
-
-            if Utc::now() + Duration::hours(2) > subscription.expires_at {
-                let expires_at = microsoft::renew_subscription(
-                    &session.ms_user,
-                    &subscription.id
-                ).await?;
-
-                subscription.expires_at = expires_at;
-
-                db.replace("subscriptions", &subscription.id, subscription.clone()).await?;
-
-                info!(
-                    "Renewed subscription '{}', now expiring at '{}'",
-                    subscription.id,
-                    subscription.expires_at
-                );
-            }
-        }
+        subscriptions::renew_for(db, user, &session.ms_user).await?;
     }
 
     let qcms = qcm::fetch_qcms(db, user).await?;
@@ -225,110 +181,6 @@ pub async fn get_data(db: &DatabaseConnection, user: &User) -> DataResult<UserDa
     })
 }
 
-pub async fn handle_notification(db: &DatabaseConnection, notification: Notification) -> DataResult<()> {
-    if &notification.client_state != &CONFIG.ms_webhook_key {
-        return Err(DataError::InvalidClientState {
-            excepted: CONFIG.ms_webhook_key.clone(),
-            returned: notification.client_state.clone()
-        });
-    }
-
-    // Multiple notifications are sent for each email received, but we must process only one
-    if &notification.change_type != "created" {
-        return Ok(());
-    }
-
-    info!("Received notification id '{}'", notification.id);
-
-    let sub = db.get::<MSSubscription>("subscriptions", &notification.id).await?;
-    let user = match sub {
-        Some(s) => db.get::<User>("users", &s.user).await?,
-        None => None
-    };
-
-    if let Some(mut u) = user {
-        if let Some(sess) = u.session.as_ref() {
-            if Utc::now() > sess.expires_at {
-                warn!("User session expired");
-            } else {
-                info!("Matching user is '{} {}'", u.cri_user.first_name, u.cri_user.last_name);
-
-                if let Err(e) = refresh_user(db, &mut u).await {
-                    error!("Failed refreshing after notification : {}", e.to_detailed_string());
-                }
-            }
-        } else {
-            warn!("User is not logged");
-        }
-    } else {
-        warn!("No matching user");
-    }
-
-    // We de not return an error to not panic MS APIs
-    Ok(())
-}
-
-pub async fn remove_subscriptions_for(db: &DatabaseConnection, user: &User) -> DataResult<()> {
-    let subscriptions: Vec<MSSubscription> = db.single_query(
-        r"
-            FOR subscription IN subscriptions
-                FILTER subscription.user == @id
-                RETURN subscription
-        ",
-        json!({
-            "id": &user.id
-        })
-    ).await?;
-
-    let session = user.session.as_ref().ok_or(DataError::NotLogged)?;
-
-    for subscription in subscriptions {
-        microsoft::unsubscribe(&session.ms_user, &subscription.id).await?;
-        db.remove("subscriptions", &subscription.id).await?;
-
-        info!("Removing subscription '{}'", subscription.id);
-    }
-
-    Ok(())
-}
-
-pub async fn notify_all(db: &DatabaseConnection, caller: &User, message: &str) -> DataResult<()> {
-    let users: Vec<User> = db.single_query(
-        r"
-            FOR user IN users
-                FILTER user.cri_user.promo == @promo
-                FILTER user.session != null
-                FILTER user.session.expires_at > @time
-                RETURN user
-        ",
-        json!({
-            "promo": &caller.cri_user.promo,
-            "time": Utc::now().timestamp()
-        })
-    ).await?;
-
-    let user_count = users.len();
-
-    for user in users {
-        push_notif::notify(
-            &user,
-            &format!("Alerte de '{} {}'", caller.cri_user.first_name, caller.cri_user.last_name),
-            message
-        ).await?;
-    }
-
-    info!(
-        "User '{} {}' sent global notification to '{}' users of promo '{}' with content : '{}'",
-        caller.cri_user.first_name,
-        caller.cri_user.last_name,
-        user_count,
-        caller.cri_user.promo,
-        message
-    );
-
-    Ok(())
-}
-
 pub struct RefreshActor {
     pub db: DatabaseConnection
 }
@@ -375,7 +227,7 @@ pub enum DataError {
         error: regex::Error
     },
 
-    #[fail(display = "Invalid QCM subject '{}'", subject)]
+    #[fail(display = "Invalid QCM result mail subject '{}'", subject)]
     InvalidSubjectError {
         subject: String,
         error: String
@@ -446,6 +298,9 @@ impl DataError {
             },
             MSError { error } => {
                 result = error.to_detailed_string();
+            },
+            InvalidSubjectError { error, .. } => {
+                result += &format!(" : {}", error);
             },
             DateParsingError { error, .. } => {
                 result += &format!(", chrono dropped error '{}'", error);
