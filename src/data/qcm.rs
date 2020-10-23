@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use log::{info, warn, error};
 use time::Duration;
-use chrono::{DateTime, Utc, NaiveDate, Datelike};
+use chrono::{DateTime, Utc, NaiveDate, Datelike, NaiveTime};
 use serde::{Serialize, Deserialize};
 
 use crate::db::DatabaseConnection;
@@ -145,21 +145,16 @@ async fn fetch_qcm(
 ) -> DataResult<()> {
     info!("Parsing mail '{}'", mail.subject);
 
-    let pdf = microsoft::get_first_attachment(
+    let is_first_part = !mail.subject.contains("2ème partie");
+    let pts = microsoft::get_first_attachment(
         ms_user,
         &mail,
         "contentType eq 'application/pdf' and name eq 'corrected.pdf'"
-    ).await?;
-
-    if pdf.is_none() {
-        // TODO: Err
-        return Ok(());
-    }
-
-    let b64: Vec<u8> = base64::decode(&pdf.unwrap().content_bytes)
-        .map_err(|e| MSError::ContentDecodingError { error: e })?;
-    let pts = pdf::parse_qcm(b64.as_slice())?;
-    let is_first_part = !mail.subject.contains("2ème partie");
+    ).await?
+        .ok_or(DataError::MissingAttachment { mail: mail.subject.clone() })
+        .and_then(|pdf| base64::decode(&pdf.content_bytes)
+        .map_err(|e| MSError::ContentDecodingError { error: e }.into()))
+        .and_then(|b64| pdf::parse_qcm(b64.as_slice()).map_err(|e| e.into()))?;
 
     if !qcms.get(&date_key).is_some() {
         qcms.insert(date_key.clone(), QCMResult {
@@ -239,6 +234,17 @@ async fn fetch_qcm(
         info!("QCM now has '{}' grades", qcm.grades.len());
     }
 
+    Ok(())
+}
+
+pub async fn set_next_qcm(
+    db: &DatabaseConnection,
+
+    promo: &String,
+
+    at: NaiveTime,
+    revisions: Vec<String>
+) -> DataResult<()> {
     Ok(())
 }
 

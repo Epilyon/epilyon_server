@@ -239,6 +239,11 @@ pub enum DataError {
         error: chrono::ParseError
     },
 
+    #[fail(display = "Missing attachment from QCM result mail '{}'", mail)]
+    MissingAttachment {
+        mail: String
+    },
+
     #[fail(display = "HTTP error while submitting a push notification")]
     PushNotifError {
         error: reqwest::Error
