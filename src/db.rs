@@ -146,18 +146,6 @@ impl DatabaseConnection {
         }
     }
 
-    pub async fn add<T>(&self, collection: &str, obj: T) -> DBResult<String>
-        where T: serde::ser::Serialize
-    {
-        let res = self.request(
-            HttpMethod::POST,
-            &format!("document/{}", collection),
-            Some(serde_json::to_value(obj)?)
-        ).await?;
-
-        Ok(res.try_get_string("_key")?)
-    }
-
     pub async fn get<T>(&self, collection: &str, key: &str) -> DBResult<Option<T>>
         where T: serde::de::DeserializeOwned
     {
@@ -188,6 +176,30 @@ impl DatabaseConnection {
                 }
             }
         }
+    }
+
+    pub async fn add<T>(&self, collection: &str, obj: T) -> DBResult<String>
+        where T: serde::ser::Serialize
+    {
+        let res = self.request(
+            HttpMethod::POST,
+            &format!("document/{}", collection),
+            Some(serde_json::to_value(obj)?)
+        ).await?;
+
+        Ok(res.try_get_string("_key")?)
+    }
+
+    pub async fn add_or_replace<T>(&self, collection: &str, obj: T) -> DBResult<()>
+        where T: serde::ser::Serialize
+    {
+        self.request(
+            HttpMethod::POST,
+            &format!("document/{}?override=true", collection),
+            Some(serde_json::to_value(obj)?)
+        ).await?;
+
+        Ok(())
     }
 
     pub async fn replace<T>(&self, collection: &str, key: &str, obj: T) -> DBResult<()>

@@ -23,7 +23,7 @@ use log::{info, error};
 use serde::Serialize;
 use serde_json::json;
 use time::Duration;
-use chrono::Utc;
+use chrono::{Utc, NaiveTime};
 use actix::prelude::{Actor, Context, AsyncContext};
 use failure::Fail;
 use lazy_static::lazy_static;
@@ -287,6 +287,11 @@ pub enum DataError {
     #[fail(display = "The given entry '{}' already exists in the database", entry)]
     DuplicatedEntry {
         entry: String
+    },
+
+    #[fail(display = "Invalid date given : '{}'", date)]
+    InvalidDate {
+        date: NaiveTime
     }
 }
 

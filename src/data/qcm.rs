@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use log::{info, warn, error};
 use time::Duration;
-use chrono::{DateTime, Utc, NaiveDate, Datelike, NaiveTime};
+use chrono::{DateTime, Utc, NaiveDate, Datelike, NaiveTime, Weekday, Timelike, Date};
 use serde::{Serialize, Deserialize};
 
 use crate::db::DatabaseConnection;
@@ -202,7 +202,10 @@ async fn fetch_qcm(
                 }
             }
 
-            qcm.grades.insert(shift + i, Grade { subject: subject.to_string(), points });
+            qcm.grades.insert((shift + i).min(qcm.grades.len()), Grade {
+                subject: subject.to_string(),
+                points
+            });
         }
 
         let mut total_n = 0.0;
@@ -240,25 +243,61 @@ async fn fetch_qcm(
 pub async fn set_next_qcm(
     db: &DatabaseConnection,
 
-    promo: &String,
+    author: &User,
 
     at: NaiveTime,
-    revisions: Vec<String>
+    revisions: Vec<Revision>
 ) -> DataResult<()> {
-    Ok(())
+    let date = get_next_qcm_day().and_time(at);
+    match date {
+        Some(at) => Ok(db.add_or_replace("next_qcms", NextQCM {
+            promo: author.cri_user.promo.clone(),
+
+            skipped: false,
+            at,
+            revisions,
+            last_editor: format!("{} {}", author.cri_user.first_name, author.cri_user.last_name)
+        }).await?),
+        None => Err(DataError::InvalidDate { date: at })
+    }
+}
+
+pub async fn skip_next_qcm(db: &DatabaseConnection, author: &User) -> DataResult<()> {
+    Ok(db.add_or_replace("next_qcms", NextQCM {
+        promo: author.cri_user.promo.clone(),
+
+        skipped: true,
+        at: get_next_qcm_day().and_hms(0, 0, 0),
+        revisions: Vec::new(),
+        last_editor: format!("{} {}", author.cri_user.first_name, author.cri_user.last_name)
+    }).await?)
 }
 
 pub async fn get_next_qcm(db: &DatabaseConnection, user: &User) -> DataResult<Option<NextQCM>> {
     if let Some(next) = db.get::<NextQCM>("next_qcms", &user.cri_user.promo).await? {
-        if Utc::now() + Duration::hours(2) > next.at {
-            db.remove("next_qcms", &next.promo).await?;
-            Ok(None)
-        } else {
-            Ok(Some(next))
+        if Utc::now() + Duration::hours(2) <= next.at {
+            return Ok(Some(next))
         }
-    } else {
-        Ok(None)
+
+        db.remove("next_qcms", &next.promo).await?;
     }
+
+    Ok(None)
+}
+
+fn get_next_qcm_day() -> Date<Utc> {
+    let mut day = Utc::today();
+    if day.weekday() == Weekday::Mon {
+        if Utc::now().hour() >= 12 {
+            return day + Duration::weeks(1);
+        }
+    }
+
+    while day.weekday() != Weekday::Mon {
+        day = day + Duration::days(1);
+    }
+
+    day
 }
 
 pub async fn get_qcm_history(db: &DatabaseConnection, user: &User) -> DataResult<Vec<QCMResult>> {
@@ -276,7 +315,8 @@ pub struct NextQCM {
     promo: String,
     skipped: bool,
     at: DateTime<Utc>,
-    revisions: Vec<Revision>
+    revisions: Vec<Revision>,
+    last_editor: String
 }
 
 #[derive(Serialize, Deserialize)]
