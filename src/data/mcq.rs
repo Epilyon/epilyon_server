@@ -54,7 +54,7 @@ pub async fn fetch_mcqs(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
     let mails = microsoft::get_mails(
         &session.ms_user,
         &format!("receivedDateTime gt {} and \
-        startsWith(subject, '[EPITA] Résultat du MCQ') and hasAttachments eq true", starting_at),
+        startsWith(subject, '[EPITA] Résultat du QCM') and hasAttachments eq true", starting_at),
         if history.mcqs.len() == 0 { 50 } else { 6 }
     ).await?;
 

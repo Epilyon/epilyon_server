@@ -135,9 +135,9 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
 
         push_notif::notify(
             user,
-            "Résultats du MCQ",
+            "Résultats du QCM",
             &format!(
-                "Résultats du MCQ : {}",
+                "Résultats du QCM : {}",
                 match mcq.grades.len() {
                     2 => "Partie 2 reçue uniquement",
                     5 => "Partie 1 reçue",
