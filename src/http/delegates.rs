@@ -48,17 +48,11 @@ pub async fn add_delegate(
 
     if let Some(user) = get_user_by_email(db.as_ref(), &data.email).await? {
         set_delegate(db.as_ref(), &user).await?;
-
-        info!(
-            "User '{} {}' is now a delegate of promo '{}'",
-            user.cri_user.first_name,
-            user.cri_user.last_name,
-            user.cri_user.promo
-        );
+        info!("User '{}' is now a delegate of promo '{}'", user, user.cri_user.promo);
 
         Ok(HttpResponse::Ok().json(json!({
             "success": true,
-            "name": &format!("{} {}", user.cri_user.first_name, user.cri_user.last_name)
+            "name": &format!("{}", user)
         })))
     } else {
         Err(DataError::UnknownUser {
@@ -81,9 +75,8 @@ pub async fn remove_delegate(
         unset_delegate(db.as_ref(), &user).await?;
 
         info!(
-            "User '{} {}' is not anymore a delegate of promo '{}'",
-            user.cri_user.first_name,
-            user.cri_user.last_name,
+            "User '{}' is not anymore a delegate of promo '{}'",
+            user,
             user.cri_user.promo
         );
     } else {

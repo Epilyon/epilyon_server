@@ -23,7 +23,7 @@ use lopdf::content::Content;
 use failure::Fail;
 
 // This is not perfect, but it works. I had to go through a part of the PDF spec for this...
-pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, PDFError> {
+pub fn parse_mcq(data: &[u8]) -> Result<Vec<f32>, PDFError> {
     let doc = Document::load_mem(data)?;
     let page_id = doc.page_iter().nth(0)
         .ok_or(lopdf::Error::PageNumberNotFound(0))?;
@@ -60,8 +60,8 @@ pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, PDFError> {
             "Td" => {
                 // Starts a new line at x, y
 
-                let xobj = operands.get(0).ok_or(PDFError::MalformedQCM)?;
-                let yobj = operands.get(1).ok_or(PDFError::MalformedQCM)?;
+                let xobj = operands.get(0).ok_or(PDFError::MalformedMCQ)?;
+                let yobj = operands.get(1).ok_or(PDFError::MalformedMCQ)?;
 
                 x = x + (xobj.as_f64().or_else(|_| xobj.as_i64().map(|i| i as f64))? * sx);
                 y = y + (yobj.as_f64().or_else(|_| yobj.as_i64().map(|i| i as f64))? * sy);
@@ -82,7 +82,7 @@ pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, PDFError> {
                         let decoded_text = Document::decode_text(current_encoding, bytes);
 
                         if decoded_text.contains(" ") {
-                            // In some QCM there is the user name at the top, we must not touch it
+                            // In some MCQ there is the user name at the top, we must not touch it
                             continue;
                         }
 
@@ -103,22 +103,22 @@ pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, PDFError> {
             "Tm" => {
                 // Defines a new text matrix (x, y, scalex, scaley), and also starts a new line
 
-                let n = operands.get(0).ok_or(PDFError::MalformedQCM)?;
+                let n = operands.get(0).ok_or(PDFError::MalformedMCQ)?;
                 if n.as_f64().is_err() {
                     sx = n.as_i64()? as f64;
                 } else {
                     sx = n.as_f64()?;
                 }
                 
-                let n = operands.get(3).ok_or(PDFError::MalformedQCM)?;
+                let n = operands.get(3).ok_or(PDFError::MalformedMCQ)?;
                 if n.as_f64().is_err() {
                     sy = n.as_i64()? as f64;
                 } else {
                     sy = n.as_f64()?;
                 }
 
-                x = operands.get(4).ok_or(PDFError::MalformedQCM)?.as_f64()?;
-                y = operands.get(5).ok_or(PDFError::MalformedQCM)?.as_f64()?;
+                x = operands.get(4).ok_or(PDFError::MalformedMCQ)?.as_f64()?;
+                y = operands.get(5).ok_or(PDFError::MalformedMCQ)?.as_f64()?;
 
                 line = false; // We are starting a new line, so setting line to false
             }
@@ -146,7 +146,7 @@ pub fn parse_qcm(data: &[u8]) -> Result<Vec<f32>, PDFError> {
 
     let mut grades: Vec<f32> = Vec::new();
     for e in result {
-        grades.push(e.text.parse::<f32>().map_err(|_| PDFError::MalformedQCM)?);
+        grades.push(e.text.parse::<f32>().map_err(|_| PDFError::MalformedMCQ)?);
     }
 
     Ok(grades)
@@ -167,7 +167,7 @@ pub enum PDFError {
     },
 
     #[fail(display = "Malformed PDF, unexcepted operand count or value type")]
-    MalformedQCM
+    MalformedMCQ
 }
 
 from_error!(lopdf::Error, PDFError, PDFError::ParsingError);

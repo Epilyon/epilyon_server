@@ -15,13 +15,15 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+use serde::Deserialize;
 use serde_json::json;
 use log::{info, error};
 use futures::StreamExt;
 use percent_encoding::percent_decode_str;
+use chrono::NaiveTime;
 use actix_web::{
     web,
-    get, post,
+    get, post, delete,
     HttpRequest, HttpResponse,
     ResponseError,
     dev::HttpResponseBuilder,
@@ -29,7 +31,7 @@ use actix_web::{
 };
 
 use crate::db::DatabaseConnection;
-use crate::data::{get_data, refresh_user, DataResult, DataError};
+use crate::data::{get_data, refresh_user, DataResult, DataError, mcq};
 use crate::data::subscriptions;
 use crate::user::User;
 use crate::user::microsoft::{MSValue, Notification};
@@ -41,6 +43,9 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
             .service(data_get)
             .service(refresh)
             .service(notify)
+            .service(get_next_mcq)
+            .service(set_next_mcq)
+            .service(skip_next_mcq)
     );
 }
 
@@ -102,6 +107,42 @@ pub async fn notify(
     }
 
     Ok(HttpResponse::Accepted().finish())
+}
+
+#[get("/next-mcq")]
+pub async fn get_next_mcq(user: User, db: web::Data<DatabaseConnection>) -> DataResult<HttpResponse> {
+    Ok(HttpResponse::Ok().json(json!({
+        "success": true,
+        "mcq": mcq::get_next_mcq(db.as_ref(), &user).await?
+    })))
+}
+
+#[post("/next-mcq")]
+pub async fn set_next_mcq(
+    user: User,
+    json: web::Json<SetNextMCQPayload>,
+    db: web::Data<DatabaseConnection>
+) -> DataResult<HttpResponse> {
+    mcq::set_next_mcq(db.get_ref(), &user, json.at.clone(), json.revisions.clone()).await?;
+
+    Ok(HttpResponse::Ok().json(json!({
+        "success": true
+    })))
+}
+
+#[delete("/next-mcq")]
+pub async fn skip_next_mcq(user: User, db: web::Data<DatabaseConnection>) -> DataResult<HttpResponse> {
+    mcq::skip_next_mcq(db.as_ref(), &user).await?;
+
+    Ok(HttpResponse::Ok().json(json!({
+        "success": true
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct SetNextMCQPayload {
+    at: NaiveTime,
+    revisions: Vec<mcq::Revision>
 }
 
 impl ResponseError for DataError {

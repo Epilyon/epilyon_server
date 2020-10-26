@@ -28,58 +28,58 @@ use crate::user::microsoft::{MSError, Mail, MSUser};
 
 use super::{pdf, DataResult, DataError};
 
-pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<QCMResult>> {
+pub async fn fetch_mcqs(db: &DatabaseConnection, user: &User) -> DataResult<Vec<MCQResult>> {
     let session = user.session.as_ref().ok_or(DataError::NotLogged)?;
-    let history_result = db.get::<QCMHistory>("qcm_histories", &user.id).await?;
+    let history_result = db.get::<MCQHistory>("mcq_histories", &user.id).await?;
     let (mut history, is_first_fetch) = match history_result {
         Some(h) => (h, false),
-        None => (QCMHistory { promo: user.id.clone(), qcms: Vec::new() }, true)
+        None => (MCQHistory { promo: user.id.clone(), mcqs: Vec::new() }, true)
     };
 
-    info!("Current QCM history has {} QCMs in it", history.qcms.len());
+    info!("Current MCQ history has {} MCQs in it", history.mcqs.len());
 
-    history.qcms.sort_by(|a, b| a.date.cmp(&b.date).reverse());
+    history.mcqs.sort_by(|a, b| a.date.cmp(&b.date).reverse());
 
     let mut starting_at = String::from("2020-10-01"); // Before that is the seminar
-    if let Some(qcm) = history.qcms.get(0) {
-        let starting_date = qcm.date;
+    if let Some(mcq) = history.mcqs.get(0) {
+        let starting_date = mcq.date;
         starting_at = format!(
             "{}-{:02}-{:02}",
             starting_date.year(), starting_date.month(), starting_date.day()
         );
     }
 
-    info!("Fetching QCM mails since date '{}'", starting_at);
+    info!("Fetching MCQ mails since date '{}'", starting_at);
 
     let mails = microsoft::get_mails(
         &session.ms_user,
         &format!("receivedDateTime gt {} and \
-        startsWith(subject, '[EPITA] Résultat du QCM') and hasAttachments eq true", starting_at),
-        if history.qcms.len() == 0 { 50 } else { 6 }
+        startsWith(subject, '[EPITA] Résultat du MCQ') and hasAttachments eq true", starting_at),
+        if history.mcqs.len() == 0 { 50 } else { 6 }
     ).await?;
 
     info!("Got {} mails", mails.len());
 
-    let mut qcms: HashMap<String, QCMResult> = HashMap::new();
+    let mut mcqs: HashMap<String, MCQResult> = HashMap::new();
     for mail in mails {
         match get_date(&mail.subject) {
             Ok((date_key, naive_date)) => {
-                if history.qcms.iter().find(|s| {
+                if history.mcqs.iter().find(|s| {
                     s.date == naive_date && s.grades.len() == 7
                 }).is_some() {
-                    info!("QCM of date '{}' is already completed, skipping", date_key);
+                    info!("MCQ of date '{}' is already completed, skipping", date_key);
                     continue;
                 }
 
-                let qcm = fetch_qcm(
+                let mcq = fetch_mcq(
                     date_key, naive_date,
                     user, &session.ms_user,
                     &mail,
-                    &mut qcms
+                    &mut mcqs
                 ).await;
 
-                if let Err(e) = qcm {
-                    error!("Failed to parse QCM from mail '{}' : {}", mail.subject, e.to_detailed_string());
+                if let Err(e) = mcq {
+                    error!("Failed to parse MCQ from mail '{}' : {}", mail.subject, e.to_detailed_string());
                     error!("Skipping this mail");
                 }
             },
@@ -90,26 +90,26 @@ pub async fn fetch_qcms(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
         }
     }
 
-    let mut new_qcms: Vec<QCMResult> = Vec::new();
-    for (_, v) in qcms {
+    let mut new_mcqs: Vec<MCQResult> = Vec::new();
+    for (_, v) in mcqs {
         if !is_first_fetch {
-            new_qcms.push(v.clone());
+            new_mcqs.push(v.clone());
         }
 
-        history.qcms.push(v);
+        history.mcqs.push(v);
     }
 
     if is_first_fetch {
-        db.add("qcm_histories", history).await?;
+        db.add("mcq_histories", history).await?;
     } else {
-        db.replace("qcm_histories", &history.promo, history.clone()).await?;
+        db.replace("mcq_histories", &history.promo, history.clone()).await?;
     }
 
-    Ok(new_qcms)
+    Ok(new_mcqs)
 }
 
 fn get_date(subject: &String) -> DataResult<(String, NaiveDate)> {
-    let qcm_date = regex::Regex::new(r"\d?\d/\d\d")?
+    let mcq_date = regex::Regex::new(r"\d?\d/\d\d")?
         .captures(subject)
         .and_then(|c| c.get(0))
         .map(|c| c.as_str().to_string())
@@ -118,9 +118,9 @@ fn get_date(subject: &String) -> DataResult<(String, NaiveDate)> {
             error: "No date was found".into()
         })? + "/2020";
 
-    let naive_date = NaiveDate::parse_from_str(&qcm_date, "%d/%m/%Y")
+    let naive_date = NaiveDate::parse_from_str(&mcq_date, "%d/%m/%Y")
         .map_err(|e| DataError::DateParsingError {
-            date: qcm_date.to_owned(),
+            date: mcq_date.to_owned(),
             error: e
         })?;
 
@@ -132,7 +132,7 @@ fn get_date(subject: &String) -> DataResult<(String, NaiveDate)> {
     Ok((date_key, naive_date))
 }
 
-async fn fetch_qcm(
+async fn fetch_mcq(
     date_key: String,
     date: NaiveDate,
 
@@ -141,7 +141,7 @@ async fn fetch_qcm(
 
     mail: &Mail,
 
-    qcms: &mut HashMap<String, QCMResult>
+    mcqs: &mut HashMap<String, MCQResult>
 ) -> DataResult<()> {
     info!("Parsing mail '{}'", mail.subject);
 
@@ -154,10 +154,10 @@ async fn fetch_qcm(
         .ok_or(DataError::MissingAttachment { mail: mail.subject.clone() })
         .and_then(|pdf| base64::decode(&pdf.content_bytes)
         .map_err(|e| MSError::ContentDecodingError { error: e }.into()))
-        .and_then(|b64| pdf::parse_qcm(b64.as_slice()).map_err(|e| e.into()))?;
+        .and_then(|b64| pdf::parse_mcq(b64.as_slice()).map_err(|e| e.into()))?;
 
-    if !qcms.get(&date_key).is_some() {
-        qcms.insert(date_key.clone(), QCMResult {
+    if !mcqs.get(&date_key).is_some() {
+        mcqs.insert(date_key.clone(), MCQResult {
             date: date.clone(),
             average: 0.0,
             grades: Vec::new()
@@ -165,9 +165,9 @@ async fn fetch_qcm(
     }
 
     // Always true
-    if let Some(qcm) = qcms.get_mut(&date_key) {
-        if qcm.grades.len() == 7 {
-            qcms.remove(&date_key);
+    if let Some(mcq) = mcqs.get_mut(&date_key) {
+        if mcq.grades.len() == 7 {
+            mcqs.remove(&date_key);
             return Ok(());
         }
 
@@ -202,7 +202,7 @@ async fn fetch_qcm(
                 }
             }
 
-            qcm.grades.insert((shift + i).min(qcm.grades.len()), Grade {
+            mcq.grades.insert((shift + i).min(mcq.grades.len()), Grade {
                 subject: subject.to_string(),
                 points
             });
@@ -210,7 +210,7 @@ async fn fetch_qcm(
 
         let mut total_n = 0.0;
         let mut total_d = 0.0;
-        for x in qcm.grades.iter() {
+        for x in mcq.grades.iter() {
             let total: f32 = x.points.iter().sum();
             let coef = match x.subject.as_str() {
                 "Algo." => 2.0,
@@ -232,15 +232,15 @@ async fn fetch_qcm(
             total_d += 10.0 * coef;
         }
 
-        qcm.average = (total_n / total_d) * 20.0;
+        mcq.average = (total_n / total_d) * 20.0;
 
-        info!("QCM now has '{}' grades", qcm.grades.len());
+        info!("MCQ now has '{}' grades", mcq.grades.len());
     }
 
     Ok(())
 }
 
-pub async fn set_next_qcm(
+pub async fn set_next_mcq(
     db: &DatabaseConnection,
 
     author: &User,
@@ -248,44 +248,44 @@ pub async fn set_next_qcm(
     at: NaiveTime,
     revisions: Vec<Revision>
 ) -> DataResult<()> {
-    let date = get_next_qcm_day().and_time(at);
+    let date = get_next_mcq_day().and_time(at);
     match date {
-        Some(at) => Ok(db.add_or_replace("next_qcms", NextQCM {
+        Some(at) => Ok(db.add_or_replace("next_mcqs", NextMCQ {
             promo: author.cri_user.promo.clone(),
 
             skipped: false,
             at,
             revisions,
-            last_editor: format!("{} {}", author.cri_user.first_name, author.cri_user.last_name)
+            last_editor: format!("{}", author)
         }).await?),
         None => Err(DataError::InvalidDate { date: at })
     }
 }
 
-pub async fn skip_next_qcm(db: &DatabaseConnection, author: &User) -> DataResult<()> {
-    Ok(db.add_or_replace("next_qcms", NextQCM {
+pub async fn skip_next_mcq(db: &DatabaseConnection, author: &User) -> DataResult<()> {
+    Ok(db.add_or_replace("next_mcqs", NextMCQ {
         promo: author.cri_user.promo.clone(),
 
         skipped: true,
-        at: get_next_qcm_day().and_hms(0, 0, 0),
+        at: get_next_mcq_day().and_hms(0, 0, 0),
         revisions: Vec::new(),
-        last_editor: format!("{} {}", author.cri_user.first_name, author.cri_user.last_name)
+        last_editor: format!("{}", author)
     }).await?)
 }
 
-pub async fn get_next_qcm(db: &DatabaseConnection, user: &User) -> DataResult<Option<NextQCM>> {
-    if let Some(next) = db.get::<NextQCM>("next_qcms", &user.cri_user.promo).await? {
+pub async fn get_next_mcq(db: &DatabaseConnection, user: &User) -> DataResult<Option<NextMCQ>> {
+    if let Some(next) = db.get::<NextMCQ>("next_mcqs", &user.cri_user.promo).await? {
         if Utc::now() + Duration::hours(2) <= next.at {
             return Ok(Some(next))
         }
 
-        db.remove("next_qcms", &next.promo).await?;
+        db.remove("next_mcqs", &next.promo).await?;
     }
 
     Ok(None)
 }
 
-fn get_next_qcm_day() -> Date<Utc> {
+fn get_next_mcq_day() -> Date<Utc> {
     let mut day = Utc::today();
     if day.weekday() == Weekday::Mon {
         if Utc::now().hour() >= 12 {
@@ -300,17 +300,17 @@ fn get_next_qcm_day() -> Date<Utc> {
     day
 }
 
-pub async fn get_qcm_history(db: &DatabaseConnection, user: &User) -> DataResult<Vec<QCMResult>> {
-    let history: Option<QCMHistory> = db.get("qcm_histories", &user.id).await?;
+pub async fn get_mcq_history(db: &DatabaseConnection, user: &User) -> DataResult<Vec<MCQResult>> {
+    let history: Option<MCQHistory> = db.get("mcq_histories", &user.id).await?;
 
     Ok(match history {
-        Some(h) => h.qcms,
+        Some(h) => h.mcqs,
         None => Vec::new()
     })
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct NextQCM {
+pub struct NextMCQ {
     #[serde(rename = "_key")]
     promo: String,
     skipped: bool,
@@ -319,21 +319,21 @@ pub struct NextQCM {
     last_editor: String
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Revision {
     subject: String,
     work: Vec<String>
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct QCMHistory {
+pub struct MCQHistory {
     #[serde(rename = "_key")]
     promo: String,
-    qcms: Vec<QCMResult>
+    mcqs: Vec<MCQResult>
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct QCMResult {
+pub struct MCQResult {
     pub date: NaiveDate,
     average: f32,
     pub grades: Vec<Grade>,

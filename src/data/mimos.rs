@@ -52,9 +52,8 @@ pub async fn add_mimos(db: &DatabaseConnection, user: &User, mimos: Mimos) -> Da
     }
 
     info!(
-        "User '{} {}' added new Mimos for subject '{}' : '{} - {}' for {}",
-        user.cri_user.first_name,
-        user.cri_user.last_name,
+        "User '{}' added new Mimos for subject '{}' : '{} - {}' for {}",
+        user,
         mimos.subject,
         mimos.number,
         mimos.title,
@@ -77,9 +76,8 @@ pub async fn remove_mimos(db: &DatabaseConnection, user: &User, number: u8, subj
     db.replace("mimos", &all.promo.clone(), all).await?;
 
     info!(
-        "User '{} {}' removed Mimos number '{}' of subject '{}'",
-        user.cri_user.first_name,
-        user.cri_user.last_name,
+        "User '{}' removed Mimos number '{}' of subject '{}'",
+        user,
         number,
         subject
     );

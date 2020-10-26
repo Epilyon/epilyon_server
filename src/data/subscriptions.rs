@@ -51,7 +51,7 @@ pub async fn handle_notification(db: &DatabaseConnection, notification: Notifica
             if Utc::now() > sess.expires_at {
                 warn!("User session expired");
             } else {
-                info!("Matching user is '{} {}'", u.cri_user.first_name, u.cri_user.last_name);
+                info!("Matching user is '{}'", u);
 
                 if let Err(e) = refresh_user(db, &mut u).await {
                     error!("Failed refreshing after notification : {}", e.to_detailed_string());
@@ -83,7 +83,7 @@ pub async fn renew_for(db: &DatabaseConnection, user: &User, ms_user: &MSUser) -
     if subscriptions.len() == 0 {
         let subscription = microsoft::subscribe(
             ms_user,
-            "/me/messages?$filter=contains(subject, 'QCM')"
+            "/me/messages?$filter=contains(subject, 'MCQ')"
         ).await?;
 
         db.add("subscriptions", MSSubscription {

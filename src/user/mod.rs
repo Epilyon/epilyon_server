@@ -130,6 +130,12 @@ pub async fn get_user_by_email(db: &DatabaseConnection, email: &str) -> UserResu
     }
 }
 
+impl std::fmt::Display for User {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{} {}", self.cri_user.first_name, self.cri_user.last_name)
+    }
+}
+
 #[derive(Debug, Fail)]
 pub enum UserError {
     #[fail(display = "CRI request error : {}", error)]

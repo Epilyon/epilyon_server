@@ -140,7 +140,7 @@ pub struct Delegate {
 impl From<User> for Delegate {
     fn from(user: User) -> Self {
         Delegate {
-            name: format!("{} {}", user.cri_user.first_name, user.cri_user.last_name),
+            name: format!("{}", user),
             email: user.cri_user.email.clone()
         }
     }

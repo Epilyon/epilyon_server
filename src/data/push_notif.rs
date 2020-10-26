@@ -42,15 +42,14 @@ pub async fn notify_all(db: &DatabaseConnection, caller: &User, message: &str) -
     for user in &users {
         notify(
             user,
-            &format!("Alerte de '{} {}'", caller.cri_user.first_name, caller.cri_user.last_name),
+            &format!("Alerte de '{}'", caller),
             message
         ).await?;
     }
 
     info!(
-        "User '{} {}' sent global notification to '{}' users of promo '{}' with content : '{}'",
-        caller.cri_user.first_name,
-        caller.cri_user.last_name,
+        "User '{}' sent global notification to '{}' users of promo '{}' with content : '{}'",
+        caller,
         users.len(),
         caller.cri_user.promo,
         message

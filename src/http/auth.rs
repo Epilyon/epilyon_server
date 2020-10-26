@@ -145,9 +145,8 @@ pub async fn redirect(
         add_promo_infos(db.as_ref(), &user).await?;
 
         info!(
-            "'{} {}' is the first of the promo '{}' to log in, making them its administrator",
-            user.cri_user.first_name,
-            user.cri_user.last_name,
+            "'{}' is the first of the promo '{}' to log in, making them its administrator",
+            user,
             user.cri_user.promo
         );
     }
@@ -157,9 +156,8 @@ pub async fn redirect(
     session.result = Some((user.id.clone(), user.cri_user.clone()));
 
     info!(
-        "Successfully logged user {} {} ({})",
-        user.cri_user.first_name,
-        user.cri_user.last_name,
+        "Successfully logged user '{}' ({})",
+        user,
         user.cri_user.email
     );
 
@@ -180,7 +178,7 @@ pub async fn end(
             sessions.remove(&session.state);
 
             let first: Vec<bool> = db.single_query(
-                r"RETURN DOCUMENT('qcm_histories', @user) == null",
+                r"RETURN DOCUMENT('mcq_histories', @user) == null",
                 json!({
                     "user": id
                 })
@@ -215,7 +213,7 @@ pub async fn refresh(mut user: User, db: web::Data<DatabaseConnection>) -> Resul
 
 #[post("/logout")]
 pub async fn logout(mut user: User, db: web::Data<DatabaseConnection>) -> Result<HttpResponse, AuthError> {
-    info!("Logging out user '{} {}'", user.cri_user.first_name, user.cri_user.last_name);
+    info!("Logging out User '{}'", user);
     if let Err(e) = subscriptions::remove_for(db.get_ref(), &user).await {
         warn!("Couldn't remove user subscriptions : {}", e.to_detailed_string());
         warn!("Ignoring");

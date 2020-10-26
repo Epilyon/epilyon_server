@@ -34,14 +34,14 @@ use crate::user::microsoft::MSError;
 use crate::user::admins::{Delegate, get_admin, get_delegates};
 use crate::sync::EpiLock;
 
-mod qcm;
+pub mod mcq;
 pub mod mimos;
 mod pdf;
 pub mod push_notif;
 pub mod subscriptions;
 
 use pdf::PDFError;
-use qcm::{NextQCM, QCMResult};
+use mcq::{NextMCQ, MCQResult};
 use mimos::Mimos;
 
 pub type DataResult<T> = Result<T, DataError>;
@@ -57,8 +57,8 @@ pub struct UserData {
     admin: Delegate,
     delegates: Vec<Delegate>,
 
-    next_qcm: Option<NextQCM>,
-    qcm_history: Vec<QCMResult>,
+    next_mcq: Option<NextMCQ>,
+    mcq_history: Vec<MCQResult>,
     mimos: Vec<Mimos>
 }
 
@@ -85,9 +85,8 @@ pub async fn refresh_all(db: &DatabaseConnection) {
             for mut user in users {
                 if let Err(e) = refresh_user(&db, &mut user).await {
                     error!(
-                        "Error while refreshing user '{} {}' : {}",
-                        user.cri_user.first_name,
-                        user.cri_user.last_name,
+                        "Error while refreshing user '{}' : {}",
+                        user,
                         e.to_detailed_string()
                     );
 
@@ -114,7 +113,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
     let user_clone = user.clone();
     let session = user.session.as_mut().ok_or(DataError::NotLogged)?;
 
-    info!("Refreshing user '{} {}'", user_clone.cri_user.first_name, user_clone.cri_user.last_name);
+    info!("Refreshing User '{}'", user_clone);
 
     if Utc::now() - Duration::minutes(5) > session.ms_user.expires_at {
         // TODO: Remove session on refresh token expiration (error_codes includes 700082)
@@ -130,16 +129,16 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
         subscriptions::renew_for(db, user, &session.ms_user).await?;
     }
 
-    let qcms = qcm::fetch_qcms(db, user).await?;
-    if let Some(qcm) = qcms.get(0) {
-        info!("{} new QCMs were received, sending push notification", qcms.len());
+    let mcqs = mcq::fetch_mcqs(db, user).await?;
+    if let Some(mcq) = mcqs.get(0) {
+        info!("{} new MCQs were received, sending push notification", mcqs.len());
 
         push_notif::notify(
             user,
-            "Résultats du QCM",
+            "Résultats du MCQ",
             &format!(
-                "Résultats du QCM : {}",
-                match qcm.grades.len() {
+                "Résultats du MCQ : {}",
+                match mcq.grades.len() {
                     2 => "Partie 2 reçue uniquement",
                     5 => "Partie 1 reçue",
                     7 => "Parties 1 & 2 reçues",
@@ -148,7 +147,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
             )
         ).await?;
     } else {
-        info!("No new QCM (or first time fetch), not sending a notification");
+        info!("No new MCQ (or first time fetch), not sending a notification");
     }
 
     if *guard {
@@ -175,8 +174,8 @@ pub async fn get_data(db: &DatabaseConnection, user: &User) -> DataResult<UserDa
         admin: get_admin(db, &user.cri_user.promo).await?,
         delegates: get_delegates(db, &user.cri_user.promo).await?,
 
-        next_qcm: qcm::get_next_qcm(db, user).await?,
-        qcm_history: qcm::get_qcm_history(db, user).await?,
+        next_mcq: mcq::get_next_mcq(db, user).await?,
+        mcq_history: mcq::get_mcq_history(db, user).await?,
         mimos: mimos::get_mimos(db, user).await?
     })
 }
@@ -217,7 +216,7 @@ pub enum DataError {
         error: MSError
     },
 
-    #[fail(display = "QCM PDF parsing error : {}", error)]
+    #[fail(display = "MCQ PDF parsing error : {}", error)]
     PDFError {
         error: PDFError
     },
@@ -227,7 +226,7 @@ pub enum DataError {
         error: regex::Error
     },
 
-    #[fail(display = "Invalid QCM result mail subject '{}'", subject)]
+    #[fail(display = "Invalid MCQ result mail subject '{}'", subject)]
     InvalidSubjectError {
         subject: String,
         error: String
@@ -239,7 +238,7 @@ pub enum DataError {
         error: chrono::ParseError
     },
 
-    #[fail(display = "Missing attachment from QCM result mail '{}'", mail)]
+    #[fail(display = "Missing attachment from MCQ result mail '{}'", mail)]
     MissingAttachment {
         mail: String
     },
