@@ -43,7 +43,6 @@ pub fn configure(cfg: &mut web::ServiceConfig, db: web::Data<DatabaseConnection>
             .service(data_get)
             .service(refresh)
             .service(notify)
-            .service(get_next_mcq)
             .service(set_next_mcq)
             .service(skip_next_mcq)
     );
@@ -107,14 +106,6 @@ pub async fn notify(
     }
 
     Ok(HttpResponse::Accepted().finish())
-}
-
-#[get("/next-mcq")]
-pub async fn get_next_mcq(user: User, db: web::Data<DatabaseConnection>) -> DataResult<HttpResponse> {
-    Ok(HttpResponse::Ok().json(json!({
-        "success": true,
-        "mcq": mcq::get_next_mcq(db.as_ref(), &user).await?
-    })))
 }
 
 #[post("/next-mcq")]
