@@ -196,7 +196,7 @@ async fn fetch_mcq(
         let shift = if is_first_part { 0 } else { 5 };
         for (i, subject) in subjects.iter().enumerate() {
             let mut points: Vec<f32> = Vec::new();
-            for k in i..i+10 {
+            for k in (i * 10)..((i+1) * 10) {
                 if let Some(pt) = pts.get(k) {
                     points.push(*pt);
                 }
