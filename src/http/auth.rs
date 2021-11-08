@@ -38,7 +38,7 @@ use actix_web::{
 };
 
 use crate::sync::EpiLock;
-use crate::user::{microsoft, UserError, UserSession, User, cri::CRIUser};
+use crate::user::{microsoft, UserError, UserSession, User, cri::CRIUser, get_user};
 use crate::user::admins::{has_admin_infos, add_promo_infos};
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::data::subscriptions;
@@ -117,23 +117,7 @@ pub async fn redirect(
 
     let (email, ms_user) = microsoft::identify(&result.code, &session.nonce).await?;
 
-    let mut matches: Vec<User> = db.single_query(
-        r"
-            FOR user IN users
-                FILTER user.cri_user.email == @email
-                    RETURN user
-        ", json!({
-            "email": email
-        })
-    ).await?;
-
-    if matches.len() == 0 {
-        return Err(AuthError::UnknownUser {
-            email: email.clone()
-        });
-    }
-
-    let mut user = matches.swap_remove(0);
+    let mut user = get_user(db.as_ref(), &email).await?;
     user.session = Some(UserSession {
         token: result.state.clone(),
         ms_user,
@@ -362,12 +346,6 @@ pub enum AuthError {
         error: microsoft::MSError
     },
 
-    #[fail(display = "User with email '{}' can't be found in the CRI, \
-    are you really from Epita Lyon ?", email)]
-    UnknownUser {
-        email: String
-    },
-
     #[fail(display = "Database remote error : {}", error)]
     DatabaseError {
         error: DatabaseError
@@ -422,7 +400,7 @@ impl ResponseError for AuthError {
         match self {
             MissingToken | InvalidTokenFormat =>
                 StatusCode::BAD_REQUEST,
-            InvalidToken { .. } | InvalidState { .. } | AuthCancelled | UnknownUser { .. } =>
+            InvalidToken { .. } | InvalidState { .. } | AuthCancelled  =>
                 StatusCode::FORBIDDEN,
             ServiceError | MicrosoftError { .. } | UserError { .. } =>
                 StatusCode::INTERNAL_SERVER_ERROR,

@@ -18,17 +18,15 @@
 use failure::Fail;
 use serde::{Serialize, Deserialize};
 use serde_json::json;
-use log::{info, warn};
 use chrono::{DateTime, Utc};
 
 use crate::db::{DatabaseConnection, DatabaseError};
-use crate::config::CONFIG;
 
 pub mod cri;
 pub mod microsoft;
 pub mod admins;
 
-use cri::CRIUser;
+use cri::CRIError;
 use microsoft::MSUser;
 
 pub(in self) type UserResult<T> = Result<T, UserError>;
@@ -52,63 +50,33 @@ pub struct UserSession {
     pub device_token: String
 }
 
-pub async fn update_users(db: &DatabaseConnection) -> UserResult<()> {
-    if let Ok(s) = std::env::var("EPILYON_DONT_FETCH_CRI") {
-        if s == "true" {
-            warn!("CRI isn't fetched due to EPILYON_DONT_FETCH_CRI being true, user list may not be up to date");
-            return Ok(())
-        }
-    }
-
-    let users = cri::fetch_users(
-        &CONFIG.cri_url,
-        &CONFIG.cri_photos_url,
-        &CONFIG.cri_accessor_username,
-        &CONFIG.cri_accessor_password
-    ).await.map_err(|e| UserError::CRIError { error: e })?;
-
-    let all_users: Vec<&String> = users.iter()
-        .map(|(_, u)| &u.username)
-        .collect();
-
-    let to_add_usernames: Vec<String> = db.single_query(
-        r#"
-        LET names = (
-            FOR u IN users
-                RETURN u.cri_user.username
-        )
-        FOR u in @users
-            FILTER !POSITION(names, u)
-            RETURN u
-        "#, json!({
-            "users": all_users
+pub async fn get_user(db: &DatabaseConnection, email: &str) -> UserResult<User> {
+    let matches: Vec<User> = db.single_query(
+        r"
+            FOR user IN users
+                FILTER user.cri_user.email == @email
+                    RETURN user
+        ", json!({
+            "email": email
         })
     ).await?;
 
-    let to_add: Vec<&(u32, CRIUser)> = users.iter()
-        .filter(|(_, user)| to_add_usernames.contains(&user.username))
-        .collect();
-
-    // to_add will be moved in the for, so getting length here
-    let added = to_add.len();
-
-    for (id, user) in to_add {
-        db.add("users", User {
-            id: (*id).to_string(),
-
-            cri_user: user.clone(),
-            groups: Vec::new(),
-            session: None
-        }).await?;
+    if let Some(user) = matches.into_iter().nth(0) {
+        return Ok(user)
     }
 
-    if added > 0 {
-        info!("Added {} new users to the database", added);
-    } else {
-        info!("User list is up to date");
-    }
+    let (id, user) = cri::fetch_user(email).await?;
+    let user = User {
+        id: id.to_string(),
 
-    Ok(())
+        cri_user: user.clone(),
+        groups: Vec::new(),
+        session: None
+    };
+
+    db.add("users", user.clone()).await?;
+
+    Ok(user)
 }
 
 pub async fn get_user_by_email(db: &DatabaseConnection, email: &str) -> UserResult<Option<User>> {
@@ -179,3 +147,4 @@ impl UserError {
 }
 
 from_error!(DatabaseError, UserError, UserError::DatabaseError);
+from_error!(CRIError, UserError, UserError::CRIError);

@@ -15,9 +15,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-use log::{info, warn, error, Level};
+use log::{info, error, Level};
 use fern::colors::{ColoredLevelConfig, Color};
-use serde_json::{json, Value as JsonValue};
 use actix::Actor;
 
 const VERSION: &str = "0.1.0";
@@ -33,8 +32,6 @@ mod db;
 mod sync;
 
 use config::CONFIG;
-use db::DatabaseConnection;
-use user::UserError;
 use data::RefreshActor;
 
 #[actix_rt::main]
@@ -63,13 +60,6 @@ async fn main() {
 
     match conn {
         Ok(db) => {
-            if let Err(e) = cri_startup(&db).await {
-                error!("Error while loading users from the CRI");
-                error!("{}", e.to_detailed_string());
-
-                return;
-            }
-
             RefreshActor {
                 db: db.clone()
             }.start();
@@ -149,31 +139,4 @@ fn setup_logger(debug: bool) -> Result<(), fern::InitError> {
     base.apply()?;
 
     Ok(())
-}
-
-async fn cri_startup(db: &DatabaseConnection) -> Result<(), UserError> {
-    if let Err(e) = user::update_users(&db).await {
-        match e {
-            UserError::CRIError { error } => {
-                let count: JsonValue = db.single_query(
-                    "RETURN COUNT(users)",
-                    json!({})
-                ).await?;
-
-                if let Some(0i64) = count[0].as_i64() {
-                    Err(UserError::CRIError { error })
-                } else {
-                    warn!("CRI error during user update : {}", error);
-                    warn!("CRI is down, but there are users in the database, continuing anyway");
-
-                    Ok(())
-                }
-            },
-            // Prevents ownership errors
-            err @ UserError::MissingEntry { .. } => Err(err), // Can't happen
-            err @ UserError::DatabaseError { .. } => Err(err)
-        }
-    } else {
-        Ok(())
-    }
 }

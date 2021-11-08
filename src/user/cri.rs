@@ -18,7 +18,8 @@
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use failure::Fail;
-use log::{info, warn};
+use log::info;
+use crate::CONFIG;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CRIUser {
@@ -27,22 +28,17 @@ pub struct CRIUser {
     pub last_name: String,
     pub email: String,
     pub promo: String,
-    pub avatar: String
+    pub avatar: String,
 }
 
-pub async fn fetch_users(
-    cri_url: &str,
-    cri_photos_url: &str,
-    username: &str,
-    password: &str
-) -> Result<Vec<(u32, CRIUser)>, CRIError> {
-    info!("Fetching users from CRI...");
+
+pub async fn fetch_user(email: &str) -> Result<(u32, CRIUser), CRIError> {
+    info!("Looking for user with email '{}' on the CRI", email);
 
     let http = reqwest::Client::new();
-
-    let res = http.get(&format!("{}/api/v2/users/search/?groups=lyn", cri_url))
+    let res = http.get(&format!("{}/api/v2/users/search?emails={}", CONFIG.cri_url, email))
         .header("Accept", "application/json")
-        .basic_auth(username, Some(password))
+        .basic_auth(&CONFIG.cri_accessor_username, Some(&CONFIG.cri_accessor_password))
         .send().await?
         .text().await?;
 
@@ -50,31 +46,25 @@ pub async fn fetch_users(
         .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
     let pretty: String = serde_json::to_string_pretty(&value)
         .map_err(|e| CRIError::RemoteError { error: e, response: res.clone() })?;
-    let response: Vec<UserResponse> = serde_json::from_str(&pretty)
+    let response: SearchResponse = serde_json::from_str(&pretty)
         .map_err(|e| CRIError::RemoteError { error: e, response: pretty.clone() })?;
 
-    info!("Fetched '{}' users from the CRI", response.len());
+    let user = response.results.get(0)
+        .ok_or_else(|| CRIError::NoMatch { email: email.to_string() })?;
 
-    let mut users = Vec::<(u32, CRIUser)>::new();
+    let group = user.groups_history.iter().find(|g| g.is_current)
+        .ok_or_else(|| CRIError::NoPromo { email: email.to_string() })?;
 
-    for u in response {
-        let current_group = u.groups_history.iter().find(|g| g.is_current);
+    info!("Found user '{}' from promo '{}'", user.login, group.graduation_year);
 
-        if let Some(group) = current_group {
-            users.push((u.uid as u32, CRIUser {
-                username: u.login.clone(),
-                first_name: capitalize(&u.first_name),
-                last_name: capitalize(&u.last_name),
-                email: u.email.clone(),
-                promo: group.graduation_year.to_string(),
-                avatar: format!("{}/{}", cri_photos_url, u.login)
-            }));
-        } else {
-            warn!("Can't find promo of user '{}' since they have no current group, skipping them", u.login);
-        }
-    }
-
-    Ok(users)
+    Ok((user.uid, CRIUser {
+        username: user.login.clone(),
+        first_name: capitalize(&user.first_name),
+        last_name: capitalize(&user.last_name),
+        email: user.email.clone(),
+        promo: group.graduation_year.to_string(),
+        avatar: format!("{}/{}", CONFIG.cri_photos_url, user.login),
+    }))
 }
 
 fn capitalize(s: &str) -> String {
@@ -87,9 +77,14 @@ fn capitalize(s: &str) -> String {
 }
 
 #[derive(Deserialize)]
+struct SearchResponse {
+    results: Vec<UserResponse>
+}
+
+#[derive(Deserialize)]
 struct UserResponse {
     login: String,
-    uid: usize,
+    uid: u32,
     first_name: String,
     last_name: String,
     email: String,
@@ -112,7 +107,17 @@ pub enum CRIError {
     #[fail(display = "CRI API threw an error or an unknown response format")]
     RemoteError {
         error: serde_json::Error,
-        response: String
+        response: String,
+    },
+
+    #[fail(display = "Can't find user with email '{}' on the CRI", email)]
+    NoMatch {
+        email: String
+    },
+
+    #[fail(display = "User with email '{}' has no current group, can't find their promotion", email)]
+    NoPromo {
+        email: String
     }
 }
 
@@ -126,10 +131,12 @@ impl CRIError {
         match self {
             HttpError { error } => {
                 result += &format!(", reqwest dropped error '{}'", error);
-            },
+            }
             RemoteError { response, error } => {
                 result += &format!(". Serde dropped error '{}' while parsing response :\n{}", error, response);
-            },
+            }
+            NoMatch { .. } => {}
+            NoPromo { .. } => {}
         }
 
         result
