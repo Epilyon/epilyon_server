@@ -62,7 +62,7 @@ pub async fn fetch_mcqs(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
 
     let mut mcqs: HashMap<String, MCQResult> = HashMap::new();
     for mail in mails {
-        match get_date(&mail.subject) {
+        match get_date(&mail) {
             Ok((date_key, naive_date)) => {
                 if history.mcqs.iter().find(|s| {
                     s.date == naive_date && s.grades.len() == 7
@@ -108,15 +108,15 @@ pub async fn fetch_mcqs(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
     Ok(new_mcqs)
 }
 
-fn get_date(subject: &String) -> DataResult<(String, NaiveDate)> {
+fn get_date(mail: &Mail) -> DataResult<(String, NaiveDate)> {
     let mcq_date = regex::Regex::new(r"\d?\d/\d\d")?
-        .captures(subject)
+        .captures(&mail.subject)
         .and_then(|c| c.get(0))
         .map(|c| c.as_str().to_string())
         .ok_or(DataError::InvalidSubjectError {
-            subject: subject.clone(),
+            subject: mail.subject.clone(),
             error: "No date was found".into()
-        })? + "/2020";
+        })? + "/" + &mail.received_at.year().to_string();
 
     let naive_date = NaiveDate::parse_from_str(&mcq_date, "%d/%m/%Y")
         .map_err(|e| DataError::DateParsingError {
@@ -145,7 +145,7 @@ async fn fetch_mcq(
 ) -> DataResult<()> {
     info!("Parsing mail '{}'", mail.subject);
 
-    let is_first_part = !mail.subject.contains("2ème partie");
+    let is_first_part = !mail.subject.contains("Feuille 2") && !mail.subject.contains("2ème partie");
     let pts = microsoft::get_first_attachment(
         ms_user,
         &mail,
@@ -190,11 +190,24 @@ async fn fetch_mcq(
                 vec!["Élec.", "Archi."]
             },
 
+            "2026" if date_key == "2021-10-11" || date_key == "2021-10-18" => if is_first_part {
+                vec!["Algo.", "Mathématiques", "Anglais C.I.E.", "Anglais T.I.M.", "Physique/Élec"]
+            } else {
+                vec!["blank-part", "Archi."]
+            },
+
+            "2026" => if is_first_part {
+                vec!["Algo.", "Mathématiques", "Anglais C.I.E.", "Anglais T.I.M.", "Physique/Élec"]
+            } else {
+                vec!["NTS", "Archi."]
+            },
+
             _ => vec![]
         };
 
         let shift = if is_first_part { 0 } else { 5 };
         for (i, subject) in subjects.iter().enumerate() {
+            if subject == &"blank-part" { continue; }
             let mut points: Vec<f32> = Vec::new();
             for k in (i * 10)..((i+1) * 10) {
                 if let Some(pt) = pts.get(k) {
@@ -219,6 +232,8 @@ async fn fetch_mcq(
                 "Anglais C.I.E." => 1.5,
                 "Anglais T.I.M." => 1.5,
                 "Physique" => 2.0,
+                "Physique/Élec" => 2.0,
+                "NTS" => 2.0,
                 "Élec." => 2.0,
                 "Archi." => 2.0,
                 "O.C." => 1.0,
