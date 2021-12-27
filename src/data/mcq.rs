@@ -109,7 +109,7 @@ pub async fn fetch_mcqs(db: &DatabaseConnection, user: &User) -> DataResult<Vec<
 }
 
 fn get_date(mail: &Mail) -> DataResult<(String, NaiveDate)> {
-    let mcq_date = regex::Regex::new(r"\d?\d/\d\d")?
+    let mut mcq_date = regex::Regex::new(r"\d?\d/\d\d")?
         .captures(&mail.subject)
         .and_then(|c| c.get(0))
         .map(|c| c.as_str().to_string())
@@ -117,6 +117,10 @@ fn get_date(mail: &Mail) -> DataResult<(String, NaiveDate)> {
             subject: mail.subject.clone(),
             error: "No date was found".into()
         })? + "/" + &mail.received_at.year().to_string();
+
+    if mcq_date.eq("22/22/2021".into()) {
+        mcq_date = "22/11/2021".into();
+    }
 
     let naive_date = NaiveDate::parse_from_str(&mcq_date, "%d/%m/%Y")
         .map_err(|e| DataError::DateParsingError {
@@ -171,6 +175,10 @@ async fn fetch_mcq(
             return Ok(());
         }
 
+        if mcq.grades.len() == 2 && !is_first_part {
+            return Ok(());
+        }
+
         let subjects = match user.cri_user.promo.as_str() {
             // *clown emoji*
             "2024" if date_key == "2020-10-12" => if is_first_part {
@@ -213,6 +221,11 @@ async fn fetch_mcq(
                 if let Some(pt) = pts.get(k) {
                     points.push(*pt);
                 }
+            }
+
+            if user.cri_user.promo.as_str().eq("2026") && date_key.eq("2021-10-25".into()) && subject == &"Physique/Élec" {
+                points[7] = 1.0;
+                points[8] = 1.0;
             }
 
             mcq.grades.insert((shift + i).min(mcq.grades.len()), Grade {
