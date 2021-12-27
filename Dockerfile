@@ -9,9 +9,14 @@ WORKDIR $BUILD_ROOT
 # Installing openssl headers and pkg-config (required openssl-sys and backtrace-sys crates)
 RUN apt-get -q update && apt-get install -y libssl-dev pkg-config
 
-COPY src src/
+# Caching dependencies
 COPY Cargo.toml .
 COPY Cargo.lock .
+RUN mkdir src \
+    && echo "// dummy file" > src/lib.rs \
+    && cargo build
+
+COPY src src/
 
 # Building
 RUN cargo build
