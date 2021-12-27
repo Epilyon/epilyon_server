@@ -34,6 +34,7 @@ use crate::db::{DatabaseConnection, DatabaseError};
 use crate::user::microsoft::MSError;
 use crate::user::admins::{Delegate, get_admin, get_delegates};
 use crate::sync::EpiLock;
+use crate::utils::is_env_enable;
 
 pub mod mcq;
 pub mod mimos;
@@ -50,8 +51,7 @@ use self::tasks::refresh_tasks_db;
 
 pub type DataResult<T> = Result<T, DataError>;
 
-const REFRESH_RATE: u64 = 2 * 24 * 60 * 60; // In seconds (= 2 days)
-const TASK_REFRESH_RATE: u64 = 6 * 60 * 60; // In seconds (= 6 hours)
+const REFRESH_RATE: u64 = 6 * 60 * 60; // In seconds (= 6 hours)
 
 lazy_static! {
     static ref REFRESH_LOCKS: Mutex<HashMap<String, Arc<Mutex<bool>>>> = Mutex::new(HashMap::new());
@@ -68,21 +68,9 @@ pub struct UserData {
     tasks: Vec<Task>
 }
 
-pub async fn refresh_tasks(db: &DatabaseConnection) {
-    info!("Refreshing tasks");
-    let task_refresh = refresh_tasks_db(&db).await;
-    match task_refresh {
-        Ok(()) => {
-            info!("Tasks refreshed");
-        },
-        Err(e) => {
-            error!("Task refreshing error : {}", e.to_detailed_string());
-            error!("Skipping current refresh");
-        }
-    }
-}
-
 pub async fn refresh_all(db: &DatabaseConnection) {
+    refresh_tasks(&db).await;
+
     let logged_users: Result<Vec<User>, DatabaseError> = db.single_query(
         r"
             FOR u IN users
@@ -124,6 +112,23 @@ pub async fn refresh_all(db: &DatabaseConnection) {
     }
 }
 
+async fn refresh_tasks(db: &DatabaseConnection) {
+    if is_env_enable("EPILYON_DONT_FETCH_EPITAF") {
+        return;
+    }
+    info!("Refreshing tasks");
+    let task_refresh = refresh_tasks_db(&db).await;
+    match task_refresh {
+        Ok(()) => {
+            info!("Tasks refreshed");
+        },
+        Err(e) => {
+            error!("Task refreshing error : {}", e.to_detailed_string());
+            error!("Skipping current refresh");
+        }
+    }
+}
+
 pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResult<()> {
     let user_lock = get_user_lock(user);
     let guard = user_lock.epilock();
@@ -145,7 +150,7 @@ pub async fn refresh_user(db: &DatabaseConnection, user: &mut User) -> DataResul
 
     db.update("users", &user.id, user_clone).await?;
 
-    if std::env::var("EPILYON_DONT_SUBSCRIBE").is_err() {
+    if !is_env_enable("EPILYON_DONT_SUBSCRIBE") {
         subscriptions::renew_for(db, user, &session.ms_user).await?;
     }
 
@@ -218,18 +223,6 @@ impl Actor for RefreshActor {
 
             ctx.spawn(actix::fut::wrap_future::<_, Self>(do_refresh(a.db.clone())));
         });
-
-        if std::env::var("EPILYON_DONT_FETCH_EPITAF").is_err() {
-            info!("Started tasks refresh process (every {} seconds)", TASK_REFRESH_RATE);
-            ctx.run_interval(StdDuration::from_secs(TASK_REFRESH_RATE), move |a, ctx| {
-                // We must do this for the reference to be borrowed in the async context
-                async fn do_refresh(db: DatabaseConnection) {
-                    refresh_tasks(&db).await
-                }
-
-                ctx.spawn(actix::fut::wrap_future::<_, Self>(do_refresh(a.db.clone())));
-            });
-        }
     }
 }
 

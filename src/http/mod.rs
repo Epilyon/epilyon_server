@@ -26,7 +26,7 @@ use actix_web::{
 };
 
 use crate::db::DatabaseConnection;
-use crate::data::{refresh_all, refresh_tasks};
+use crate::data::refresh_all;
 
 mod auth;
 mod data;
@@ -63,9 +63,6 @@ pub async fn start(address: &str, port: u16, db: DatabaseConnection) -> Result<(
     info!("Listening on http://{}...", address);
 
     refresh_all(db_clone.get_ref()).await;
-    if std::env::var("EPILYON_DONT_FETCH_EPITAF").is_err() {
-        refresh_tasks(db_clone.get_ref()).await;
-    }
 
     server.await.map_err(|e| HttpError::ServerError { error: e })
 }
