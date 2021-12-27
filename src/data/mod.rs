@@ -28,6 +28,7 @@ use actix::prelude::{Actor, Context, AsyncContext};
 use failure::Fail;
 use lazy_static::lazy_static;
 
+use crate::user::epitaf::{EpitafError, Task};
 use crate::user::{User, microsoft, UserError};
 use crate::db::{DatabaseConnection, DatabaseError};
 use crate::user::microsoft::MSError;
@@ -36,6 +37,7 @@ use crate::sync::EpiLock;
 
 pub mod mcq;
 pub mod mimos;
+pub mod tasks;
 mod pdf;
 pub mod push_notif;
 pub mod subscriptions;
@@ -44,9 +46,12 @@ use pdf::PDFError;
 use mcq::{NextMCQ, MCQResult};
 use mimos::Mimos;
 
+use self::tasks::refresh_tasks_db;
+
 pub type DataResult<T> = Result<T, DataError>;
 
 const REFRESH_RATE: u64 = 2 * 24 * 60 * 60; // In seconds (= 2 days)
+const TASK_REFRESH_RATE: u64 = 6 * 60 * 60; // In seconds (= 6 hours)
 
 lazy_static! {
     static ref REFRESH_LOCKS: Mutex<HashMap<String, Arc<Mutex<bool>>>> = Mutex::new(HashMap::new());
@@ -59,7 +64,22 @@ pub struct UserData {
 
     next_mcq: Option<NextMCQ>,
     mcq_history: Vec<MCQResult>,
-    mimos: Vec<Mimos>
+    mimos: Vec<Mimos>,
+    tasks: Vec<Task>
+}
+
+pub async fn refresh_tasks(db: &DatabaseConnection) {
+    info!("Refreshing tasks");
+    let task_refresh = refresh_tasks_db(&db).await;
+    match task_refresh {
+        Ok(()) => {
+            info!("Tasks refreshed");
+        },
+        Err(e) => {
+            error!("Task refreshing error : {}", e.to_detailed_string());
+            error!("Skipping current refresh");
+        }
+    }
 }
 
 pub async fn refresh_all(db: &DatabaseConnection) {
@@ -176,7 +196,8 @@ pub async fn get_data(db: &DatabaseConnection, user: &User) -> DataResult<UserDa
 
         next_mcq: mcq::get_next_mcq(db, user).await?,
         mcq_history: mcq::get_mcq_history(db, user).await?,
-        mimos: mimos::get_mimos(db, user).await?
+        mimos: mimos::get_mimos(db, user).await?,
+        tasks: tasks::get_tasks(db, user).await?
     })
 }
 
@@ -189,7 +210,6 @@ impl Actor for RefreshActor {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("Started refresh process (every {} seconds)", REFRESH_RATE);
-
         ctx.run_interval(StdDuration::from_secs(REFRESH_RATE), move |a, ctx| {
             // We must do this for the reference to be borrowed in the async context
             async fn do_refresh(db: DatabaseConnection) {
@@ -198,6 +218,18 @@ impl Actor for RefreshActor {
 
             ctx.spawn(actix::fut::wrap_future::<_, Self>(do_refresh(a.db.clone())));
         });
+
+        if std::env::var("EPILYON_DONT_FETCH_EPITAF").is_err() {
+            info!("Started tasks refresh process (every {} seconds)", TASK_REFRESH_RATE);
+            ctx.run_interval(StdDuration::from_secs(TASK_REFRESH_RATE), move |a, ctx| {
+                // We must do this for the reference to be borrowed in the async context
+                async fn do_refresh(db: DatabaseConnection) {
+                    refresh_tasks(&db).await
+                }
+
+                ctx.spawn(actix::fut::wrap_future::<_, Self>(do_refresh(a.db.clone())));
+            });
+        }
     }
 }
 
@@ -214,6 +246,11 @@ pub enum DataError {
     #[fail(display = "Microsoft request failed : {}", error)]
     MSError {
         error: MSError
+    },
+
+    #[fail(display = "Epitaf request failed : {}", error)]
+    EpitafError {
+        error: EpitafError
     },
 
     #[fail(display = "MCQ PDF parsing error : {}", error)]

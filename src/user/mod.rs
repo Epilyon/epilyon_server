@@ -25,6 +25,7 @@ use crate::db::{DatabaseConnection, DatabaseError};
 pub mod cri;
 pub mod microsoft;
 pub mod admins;
+pub mod epitaf;
 
 use cri::CRIError;
 use microsoft::MSUser;
