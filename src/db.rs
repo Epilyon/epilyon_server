@@ -81,7 +81,7 @@ pub async fn open(
         conn.create_database(database).await?;
     }
 
-    for col in vec!["users", "next_mcqs", "mcq_histories", "mimos", "options", "admins", "subscriptions"] {
+    for col in vec!["users", "next_mcqs", "mcq_histories", "mimos", "tasks", "options", "admins", "subscriptions"] {
         if !conn.does_collection_exist(col).await? {
             info!("  - Creating table '{}'", col);
             conn.add_collection(col).await?;
@@ -195,7 +195,7 @@ impl DatabaseConnection {
     {
         self.request(
             HttpMethod::POST,
-            &format!("document/{}?override=true", collection),
+            &format!("document/{}?overwrite=true", collection),
             Some(serde_json::to_value(obj)?)
         ).await?;
 

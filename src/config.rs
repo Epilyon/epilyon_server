@@ -42,6 +42,9 @@ pub struct EpiConfig {
     pub cri_photos_url: String,
     pub cri_accessor_username: String,
     pub cri_accessor_password: String,
+    
+    pub epitaf_url: String,
+    pub epitaf_token: String,
 
     pub ms_tenant_url: String,
     pub ms_client_id: String,
@@ -69,6 +72,9 @@ fn default() -> EpiConfig {
         cri_photos_url: "https://cri.photos.url".to_string(),
         cri_accessor_username: "firstname.lastname".to_string(),
         cri_accessor_password: "password".to_string(),
+        
+        epitaf_url: "https://api.epitaf.fr/v1".to_string(),
+        epitaf_token: "your_epitaf_token".to_string(),
 
         ms_tenant_url: "https://login.microsoftonline.com/your_tenant_url".to_string(),
         ms_client_id: "your_client_id".to_string(),

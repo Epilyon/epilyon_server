@@ -24,6 +24,8 @@ const VERSION: &str = "0.1.0";
 #[macro_use]
 mod macros;
 
+mod utils;
+
 mod data;
 mod http;
 mod user;
@@ -33,13 +35,11 @@ mod sync;
 
 use config::CONFIG;
 use data::RefreshActor;
+use utils::is_env_enable;
 
 #[actix_rt::main]
 async fn main() {
-    let is_debug = match std::env::var("EPILYON_DEBUG") {
-        Ok(var) => var.to_lowercase() == "true",
-        Err(_) => false
-    };
+    let is_debug = is_env_enable("EPILYON_DEBUG");
 
     if let Err(e) = setup_logger(is_debug) {
         eprintln!("Couldn't initialize logger : {}", e);
